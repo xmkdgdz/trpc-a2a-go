@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"trpc.group/trpc-go/a2a-go/auth"
+	"trpc.group/trpc-go/a2a-go/protocol"
 	"trpc.group/trpc-go/a2a-go/server"
 	"trpc.group/trpc-go/a2a-go/taskmanager"
 )
@@ -163,27 +164,27 @@ type echoProcessor struct{}
 func (p *echoProcessor) Process(
 	ctx context.Context,
 	taskID string,
-	msg taskmanager.Message,
+	msg protocol.Message,
 	handle taskmanager.TaskHandle,
 ) error {
 	// Create a concatenated string of all text parts
 	var responseText string
 	for _, part := range msg.Parts {
-		if textPart, ok := part.(taskmanager.TextPart); ok {
+		if textPart, ok := part.(protocol.TextPart); ok {
 			responseText += textPart.Text + " "
 		}
 	}
 
 	// Create response message
-	responseMsg := &taskmanager.Message{
-		Role: taskmanager.MessageRoleAgent,
-		Parts: []taskmanager.Part{
-			taskmanager.NewTextPart(fmt.Sprintf("Echo: %s", responseText)),
+	responseMsg := &protocol.Message{
+		Role: protocol.MessageRoleAgent,
+		Parts: []protocol.Part{
+			protocol.NewTextPart(fmt.Sprintf("Echo: %s", responseText)),
 		},
 	}
 
 	// Update the task status to completed with our response
-	if err := handle.UpdateStatus(taskmanager.TaskStateCompleted, responseMsg); err != nil {
+	if err := handle.UpdateStatus(protocol.TaskStateCompleted, responseMsg); err != nil {
 		return fmt.Errorf("failed to update task status: %w", err)
 	}
 

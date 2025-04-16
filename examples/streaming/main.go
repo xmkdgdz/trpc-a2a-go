@@ -17,8 +17,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"trpc.group/trpc-go/a2a-go/client"
-	"trpc.group/trpc-go/a2a-go/taskmanager"
+	"trpc.group/trpc-go/a2a-go/protocol"
 )
 
 func main() {
@@ -32,12 +33,12 @@ func main() {
 	// 2. Define the task specification (using TaskSendParams for streaming).
 	// Note: StreamTask now expects TaskSendParams.
 	// The specific TaskSpec details are often encapsulated within the initial Message.
-	taskParams := taskmanager.SendTaskParams{
+	taskParams := protocol.SendTaskParams{
 		ID: fmt.Sprintf("stream-task-%d-%s", time.Now().UnixNano(), uuid.New().String()), // Generate a unique Task ID
-		Message: taskmanager.Message{
-			Role: taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{
-				taskmanager.NewTextPart("Process this streaming data chunk by chunk."), // Example user input
+		Message: protocol.Message{
+			Role: protocol.MessageRoleUser,
+			Parts: []protocol.Part{
+				protocol.NewTextPart("Process this streaming data chunk by chunk."), // Example user input
 			},
 		},
 		AcceptedOutputModes: []string{"stream"}, // Indicate preference for streaming
@@ -75,7 +76,7 @@ func main() {
 			}
 			// Process the received event.
 			switch e := event.(type) {
-			case taskmanager.TaskStatusUpdateEvent:
+			case protocol.TaskStatusUpdateEvent:
 				fmt.Printf("Received Status Update - TaskID: %s, State: %s, Final: %t\n", e.ID, e.Status.State, e.Final)
 				if e.Status.Message != nil {
 					fmt.Printf("  Status Message: Role=%s, Parts=%+v\n", e.Status.Message.Role, e.Status.Message.Parts)
@@ -84,7 +85,7 @@ func main() {
 					log.Println("Received final status update, exiting.")
 					return
 				}
-			case taskmanager.TaskArtifactUpdateEvent:
+			case protocol.TaskArtifactUpdateEvent:
 				fmt.Printf("Received Artifact Update - TaskID: %s, Index: %d, Append: %v, LastChunk: %v\n",
 					e.ID, e.Artifact.Index, e.Artifact.Append, e.Artifact.LastChunk)
 				fmt.Printf("  Artifact Parts: %+v\n", e.Artifact.Parts)

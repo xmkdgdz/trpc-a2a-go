@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"trpc.group/trpc-go/a2a-go/auth"
 	"trpc.group/trpc-go/a2a-go/jsonrpc"
 	"trpc.group/trpc-go/a2a-go/protocol"
@@ -134,7 +135,7 @@ func verifyPushNotificationConfig(t *testing.T, resp *jsonrpc.Response, expected
 	resultBytes, err := json.Marshal(resp.Result)
 	require.NoError(t, err)
 
-	var config taskmanager.TaskPushNotificationConfig
+	var config protocol.TaskPushNotificationConfig
 	err = json.Unmarshal(resultBytes, &config)
 	require.NoError(t, err)
 
@@ -216,15 +217,15 @@ func TestA2AServer_AuthMiddleware(t *testing.T) {
 
 	t.Run("Auth Success", func(t *testing.T) {
 		// Configure mock task manager to succeed
-		mockTM.GetResponse = &taskmanager.Task{
+		mockTM.GetResponse = &protocol.Task{
 			ID:     "test-task-auth",
-			Status: taskmanager.TaskStatus{State: taskmanager.TaskStateCompleted},
+			Status: protocol.TaskStatus{State: protocol.TaskStateCompleted},
 		}
 		mockTM.GetError = nil
 
 		// Create valid request with auth header
 		req, _ := createJSONRPCRequest(t, protocol.MethodTasksGet,
-			taskmanager.TaskQueryParams{ID: "test-task-auth"}, "req-auth-1")
+			protocol.TaskQueryParams{ID: "test-task-auth"}, "req-auth-1")
 		req.Header.Set("X-API-Key", "test-api-key") // Valid API key
 
 		resp := executeRequest(t, testServer, req, testServer.URL+"/")
@@ -239,7 +240,7 @@ func TestA2AServer_AuthMiddleware(t *testing.T) {
 	t.Run("Auth Failure", func(t *testing.T) {
 		// Create request with invalid auth
 		req, _ := createJSONRPCRequest(t, protocol.MethodTasksGet,
-			taskmanager.TaskQueryParams{ID: "test-task-auth"}, "req-auth-2")
+			protocol.TaskQueryParams{ID: "test-task-auth"}, "req-auth-2")
 		req.Header.Set("X-API-Key", "invalid-key") // Invalid API key
 
 		resp := executeRequest(t, testServer, req, testServer.URL+"/")
@@ -299,18 +300,18 @@ func TestA2AServer_PushNotifications(t *testing.T) {
 	// Test push notification set endpoint
 	t.Run("PushNotification_Set", func(t *testing.T) {
 		// Configure mock task manager
-		mockTM.pushNotificationSetResponse = &taskmanager.TaskPushNotificationConfig{
+		mockTM.pushNotificationSetResponse = &protocol.TaskPushNotificationConfig{
 			ID: "test-push-task",
-			PushNotificationConfig: taskmanager.PushNotificationConfig{
+			PushNotificationConfig: protocol.PushNotificationConfig{
 				URL: "https://example.com/webhook",
 			},
 		}
 		mockTM.pushNotificationSetError = nil
 
 		// Create request
-		params := taskmanager.TaskPushNotificationConfig{
+		params := protocol.TaskPushNotificationConfig{
 			ID: "test-push-task",
-			PushNotificationConfig: taskmanager.PushNotificationConfig{
+			PushNotificationConfig: protocol.PushNotificationConfig{
 				URL: "https://example.com/webhook",
 			},
 		}
@@ -330,16 +331,16 @@ func TestA2AServer_PushNotifications(t *testing.T) {
 	// Test push notification get endpoint
 	t.Run("PushNotification_Get", func(t *testing.T) {
 		// Configure mock task manager
-		mockTM.pushNotificationGetResponse = &taskmanager.TaskPushNotificationConfig{
+		mockTM.pushNotificationGetResponse = &protocol.TaskPushNotificationConfig{
 			ID: "test-push-task",
-			PushNotificationConfig: taskmanager.PushNotificationConfig{
+			PushNotificationConfig: protocol.PushNotificationConfig{
 				URL: "https://example.com/webhook",
 			},
 		}
 		mockTM.pushNotificationGetError = nil
 
 		// Create request
-		params := taskmanager.TaskIDParams{
+		params := protocol.TaskIDParams{
 			ID: "test-push-task",
 		}
 
@@ -360,7 +361,7 @@ func TestA2AServer_PushNotifications(t *testing.T) {
 		// Test push notification get with error
 		mockTM.pushNotificationGetError = fmt.Errorf("push notification not found")
 
-		params := taskmanager.TaskIDParams{
+		params := protocol.TaskIDParams{
 			ID: "nonexistent-task",
 		}
 
@@ -391,30 +392,30 @@ func TestA2AServer_Resubscribe(t *testing.T) {
 
 	t.Run("Resubscribe_Success", func(t *testing.T) {
 		// Configure mock events
-		workingEvent := taskmanager.TaskStatusUpdateEvent{
+		workingEvent := protocol.TaskStatusUpdateEvent{
 			ID:     "resubscribe-task",
-			Status: taskmanager.TaskStatus{State: taskmanager.TaskStateWorking},
+			Status: protocol.TaskStatus{State: protocol.TaskStateWorking},
 			Final:  false,
 		}
-		completedEvent := taskmanager.TaskStatusUpdateEvent{
+		completedEvent := protocol.TaskStatusUpdateEvent{
 			ID:     "resubscribe-task",
-			Status: taskmanager.TaskStatus{State: taskmanager.TaskStateCompleted},
+			Status: protocol.TaskStatus{State: protocol.TaskStateCompleted},
 			Final:  true,
 		}
-		mockTM.SubscribeEvents = []taskmanager.TaskEvent{workingEvent, completedEvent}
+		mockTM.SubscribeEvents = []protocol.TaskEvent{workingEvent, completedEvent}
 		mockTM.SubscribeError = nil
 
 		// Add task to mock task manager to ensure it exists
-		mockTM.tasks["resubscribe-task"] = &taskmanager.Task{
+		mockTM.tasks["resubscribe-task"] = &protocol.Task{
 			ID: "resubscribe-task",
-			Status: taskmanager.TaskStatus{
-				State:     taskmanager.TaskStateWorking,
+			Status: protocol.TaskStatus{
+				State:     protocol.TaskStateWorking,
 				Timestamp: getCurrentTimestamp(),
 			},
 		}
 
 		// Create request - resubscribe expects SSE response
-		params := taskmanager.TaskIDParams{
+		params := protocol.TaskIDParams{
 			ID: "resubscribe-task",
 		}
 		paramsBytes, _ := json.Marshal(params)
@@ -457,7 +458,7 @@ func TestA2AServer_Resubscribe(t *testing.T) {
 		mockTM.SubscribeError = taskmanager.ErrTaskNotFound("nonexistent-task")
 
 		// Create request
-		params := taskmanager.TaskIDParams{
+		params := protocol.TaskIDParams{
 			ID: "nonexistent-task",
 		}
 

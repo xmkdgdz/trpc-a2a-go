@@ -19,20 +19,22 @@ import (
 	// "trpc.group/trpc-go/a2a-go/jsonrpc" // Removed unused import
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"trpc.group/trpc-go/a2a-go/jsonrpc"
+	"trpc.group/trpc-go/a2a-go/protocol"
 )
 
 // mockProcessor is a simple TaskProcessor for testing.
 type mockProcessor struct {
-	processFunc func(ctx context.Context, taskID string, msg Message, handle TaskHandle) error
+	processFunc func(ctx context.Context, taskID string, msg protocol.Message, handle TaskHandle) error
 	mu          sync.Mutex
 	callCount   int
 	lastTaskID  string
-	lastMessage Message
+	lastMessage protocol.Message
 }
 
 // Process implements TaskProcessor.
-func (p *mockProcessor) Process(ctx context.Context, taskID string, msg Message, handle TaskHandle) error {
+func (p *mockProcessor) Process(ctx context.Context, taskID string, msg protocol.Message, handle TaskHandle) error {
 	p.mu.Lock()
 	p.callCount++
 	p.lastTaskID = taskID
@@ -54,9 +56,9 @@ func (p *mockProcessor) Process(ctx context.Context, taskID string, msg Message,
 	}
 
 	// Set the status to Working first to test transition
-	err := handle.UpdateStatus(TaskStateWorking, &Message{
-		Role:  MessageRoleAgent,
-		Parts: []Part{NewTextPart("Mock Working...")},
+	err := handle.UpdateStatus(protocol.TaskStateWorking, &protocol.Message{
+		Role:  protocol.MessageRoleAgent,
+		Parts: []protocol.Part{protocol.NewTextPart("Mock Working...")},
 	})
 	if err != nil {
 		return err
@@ -71,9 +73,9 @@ func (p *mockProcessor) Process(ctx context.Context, taskID string, msg Message,
 	}
 
 	// Mark task as completed and send final message
-	err = handle.UpdateStatus(TaskStateCompleted, &Message{
-		Role:  MessageRoleAgent,
-		Parts: []Part{NewTextPart("Mock Success")},
+	err = handle.UpdateStatus(protocol.TaskStateCompleted, &protocol.Message{
+		Role:  protocol.MessageRoleAgent,
+		Parts: []protocol.Part{protocol.NewTextPart("Mock Success")},
 	})
 
 	return err
@@ -97,9 +99,9 @@ func TestNewMemoryTaskManager(t *testing.T) {
 
 // assertTextPart is a helper function that asserts that a Part is a TextPart
 // and contains the expected text. Returns the TextPart for further assertions.
-func assertTextPart(t *testing.T, part Part, expectedText string) TextPart {
+func assertTextPart(t *testing.T, part protocol.Part, expectedText string) protocol.TextPart {
 	t.Helper()
-	textPart, ok := part.(TextPart)
+	textPart, ok := part.(protocol.TextPart)
 	require.True(t, ok, "Expected part to be TextPart")
 	if expectedText != "" {
 		assert.Contains(t, textPart.Text, expectedText, "TextPart should contain expected text")
@@ -108,7 +110,7 @@ func assertTextPart(t *testing.T, part Part, expectedText string) TextPart {
 }
 
 // assertTaskStatus is a helper function that asserts a task has the expected state.
-func assertTaskStatus(t *testing.T, task *Task, expectedID string, expectedState TaskState) {
+func assertTaskStatus(t *testing.T, task *protocol.Task, expectedID string, expectedState protocol.TaskState) {
 	t.Helper()
 	require.NotNil(t, task, "Task should not be nil")
 	assert.Equal(t, expectedID, task.ID, "Task ID should match")
@@ -116,20 +118,20 @@ func assertTaskStatus(t *testing.T, task *Task, expectedID string, expectedState
 }
 
 // createTestTask creates a standard test task with the given ID and message text.
-func createTestTask(id, messageText string) SendTaskParams {
-	return SendTaskParams{
+func createTestTask(id, messageText string) protocol.SendTaskParams {
+	return protocol.SendTaskParams{
 		ID: id,
-		Message: Message{
-			Role:  MessageRoleUser,
-			Parts: []Part{NewTextPart(messageText)},
+		Message: protocol.Message{
+			Role:  protocol.MessageRoleUser,
+			Parts: []protocol.Part{protocol.NewTextPart(messageText)},
 		},
 	}
 }
 
 // Helper function to collect task events from a channel until completion or timeout
-func collectTaskEvents(t *testing.T, eventChan <-chan TaskEvent, targetState TaskState, timeoutDuration time.Duration) []TaskEvent {
+func collectTaskEvents(t *testing.T, eventChan <-chan protocol.TaskEvent, targetState protocol.TaskState, timeoutDuration time.Duration) []protocol.TaskEvent {
 	// Collect events with timeout
-	events := []TaskEvent{}
+	events := []protocol.TaskEvent{}
 	timeout := time.After(timeoutDuration) // Safety timeout
 	done := false
 	for !done {
@@ -142,7 +144,7 @@ func collectTaskEvents(t *testing.T, eventChan <-chan TaskEvent, targetState Tas
 			events = append(events, event)
 
 			// If we receive a final event matching our target state, we can exit early
-			if statusEvent, ok := event.(TaskStatusUpdateEvent); ok &&
+			if statusEvent, ok := event.(protocol.TaskStatusUpdateEvent); ok &&
 				statusEvent.Final && statusEvent.Status.State == targetState {
 				// We got what we need, break out
 				t.Logf("Received final %s event, breaking early", targetState)
@@ -167,7 +169,7 @@ func TestMemTaskManager_OnSendTask_Sync(t *testing.T) {
 
 	task, err := tm.OnSendTask(context.Background(), params)
 	require.NoError(t, err)
-	assertTaskStatus(t, task, taskID, TaskStateCompleted) // Default mock behavior
+	assertTaskStatus(t, task, taskID, protocol.TaskStateCompleted) // Default mock behavior
 
 	// Verify message content
 	require.NotNil(t, task.Status.Message)
@@ -190,24 +192,24 @@ func TestMemTaskManager_OnSendTask_Sync(t *testing.T) {
 	require.GreaterOrEqual(t, len(history), 3, "Should have at least 3 messages in history")
 
 	// Check first message is from user
-	assert.Equal(t, MessageRoleUser, history[0].Role)
+	assert.Equal(t, protocol.MessageRoleUser, history[0].Role)
 	textPartHistory := assertTextPart(t, history[0].Parts[0], "Sync Task")
 	assert.Equal(t, "Sync Task", textPartHistory.Text)
 
 	// Check last message has completion status
 	lastMsg := history[len(history)-1]
-	assert.Equal(t, MessageRoleAgent, lastMsg.Role)
+	assert.Equal(t, protocol.MessageRoleAgent, lastMsg.Role)
 	assertTextPart(t, lastMsg.Parts[0], "Mock Success")
 
 	// Test processor error case
-	processor.processFunc = func(ctx context.Context, taskID string, msg Message, handle TaskHandle) error {
+	processor.processFunc = func(ctx context.Context, taskID string, msg protocol.Message, handle TaskHandle) error {
 		return fmt.Errorf("processor error")
 	}
 	taskID = "test-sync-err"
 	params.ID = taskID
 	task, err = tm.OnSendTask(context.Background(), params)
 	require.Error(t, err)
-	assertTaskStatus(t, task, taskID, TaskStateFailed)
+	assertTaskStatus(t, task, taskID, protocol.TaskStateFailed)
 
 	// Verify error message
 	require.NotNil(t, task.Status.Message)
@@ -218,11 +220,11 @@ func TestMemTaskManager_OnSendTask_Sync(t *testing.T) {
 func TestOnSendTaskSubAsync(t *testing.T) {
 	// Create processor with custom logic for this test
 	processor := &mockProcessor{
-		processFunc: func(ctx context.Context, taskID string, msg Message, handle TaskHandle) error {
+		processFunc: func(ctx context.Context, taskID string, msg protocol.Message, handle TaskHandle) error {
 			// Explicitly set working state
-			err := handle.UpdateStatus(TaskStateWorking, &Message{
-				Role:  MessageRoleAgent,
-				Parts: []Part{NewTextPart("Mock working...")},
+			err := handle.UpdateStatus(protocol.TaskStateWorking, &protocol.Message{
+				Role:  protocol.MessageRoleAgent,
+				Parts: []protocol.Part{protocol.NewTextPart("Mock working...")},
 			})
 			if err != nil {
 				return err
@@ -237,9 +239,9 @@ func TestOnSendTaskSubAsync(t *testing.T) {
 			}
 
 			// Set completed state
-			return handle.UpdateStatus(TaskStateCompleted, &Message{
-				Role:  MessageRoleAgent,
-				Parts: []Part{NewTextPart("Mock Success")},
+			return handle.UpdateStatus(protocol.TaskStateCompleted, &protocol.Message{
+				Role:  protocol.MessageRoleAgent,
+				Parts: []protocol.Part{protocol.NewTextPart("Mock Success")},
 			})
 		},
 	}
@@ -258,15 +260,15 @@ func TestOnSendTaskSubAsync(t *testing.T) {
 	require.NotNil(t, eventChan)
 
 	// Use helper function to collect events
-	events := collectTaskEvents(t, eventChan, TaskStateCompleted, 3*time.Second)
+	events := collectTaskEvents(t, eventChan, protocol.TaskStateCompleted, 3*time.Second)
 
 	require.NotEmpty(t, events, "Should have received at least one event")
 
 	// Find the Working event
 	var foundWorking bool
 	for _, event := range events {
-		if statusEvent, ok := event.(TaskStatusUpdateEvent); ok &&
-			statusEvent.Status.State == TaskStateWorking {
+		if statusEvent, ok := event.(protocol.TaskStatusUpdateEvent); ok &&
+			statusEvent.Status.State == protocol.TaskStateWorking {
 			foundWorking = true
 			break
 		}
@@ -276,8 +278,8 @@ func TestOnSendTaskSubAsync(t *testing.T) {
 	// Find the Completed event (final event)
 	var foundCompleted bool
 	for _, event := range events {
-		if statusEvent, ok := event.(TaskStatusUpdateEvent); ok &&
-			statusEvent.Status.State == TaskStateCompleted && statusEvent.Final {
+		if statusEvent, ok := event.(protocol.TaskStatusUpdateEvent); ok &&
+			statusEvent.Status.State == protocol.TaskStateCompleted && statusEvent.Final {
 			foundCompleted = true
 
 			// Validate the completed event message
@@ -290,9 +292,9 @@ func TestOnSendTaskSubAsync(t *testing.T) {
 	assert.True(t, foundCompleted, "Should have received a Completed state event")
 
 	// Double check task state via OnGetTask
-	task, err := tm.OnGetTask(context.Background(), TaskQueryParams{ID: taskID})
+	task, err := tm.OnGetTask(context.Background(), protocol.TaskQueryParams{ID: taskID})
 	require.NoError(t, err)
-	assertTaskStatus(t, task, taskID, TaskStateCompleted)
+	assertTaskStatus(t, task, taskID, protocol.TaskStateCompleted)
 
 	// Check processor was called
 	processor.mu.Lock()
@@ -316,11 +318,11 @@ func TestOnSendTaskSubAsync(t *testing.T) {
 func TestMemTaskMgr_OnSendTaskSub_Error(t *testing.T) {
 	errMsg := "async processor error"
 	processor := &mockProcessor{
-		processFunc: func(ctx context.Context, taskID string, msg Message, handle TaskHandle) error {
+		processFunc: func(ctx context.Context, taskID string, msg protocol.Message, handle TaskHandle) error {
 			// Simulate some work before failing
-			err := handle.UpdateStatus(TaskStateWorking, &Message{
-				Role:  MessageRoleAgent,
-				Parts: []Part{NewTextPart("Working...")},
+			err := handle.UpdateStatus(protocol.TaskStateWorking, &protocol.Message{
+				Role:  protocol.MessageRoleAgent,
+				Parts: []protocol.Part{protocol.NewTextPart("Working...")},
 			})
 			if err != nil {
 				return err
@@ -350,15 +352,15 @@ func TestMemTaskMgr_OnSendTaskSub_Error(t *testing.T) {
 	require.NotNil(t, eventChan)
 
 	// Use helper function to collect events
-	events := collectTaskEvents(t, eventChan, TaskStateFailed, 3*time.Second)
+	events := collectTaskEvents(t, eventChan, protocol.TaskStateFailed, 3*time.Second)
 
 	require.NotEmpty(t, events, "Should have received at least one event")
 
 	// Find the Working event
 	var foundWorking bool
 	for _, event := range events {
-		if statusEvent, ok := event.(TaskStatusUpdateEvent); ok &&
-			statusEvent.Status.State == TaskStateWorking {
+		if statusEvent, ok := event.(protocol.TaskStatusUpdateEvent); ok &&
+			statusEvent.Status.State == protocol.TaskStateWorking {
 			foundWorking = true
 			break
 		}
@@ -368,8 +370,8 @@ func TestMemTaskMgr_OnSendTaskSub_Error(t *testing.T) {
 	// Find the Failed event (final event)
 	var foundFailed bool
 	for _, event := range events {
-		if statusEvent, ok := event.(TaskStatusUpdateEvent); ok &&
-			statusEvent.Status.State == TaskStateFailed && statusEvent.Final {
+		if statusEvent, ok := event.(protocol.TaskStatusUpdateEvent); ok &&
+			statusEvent.Status.State == protocol.TaskStateFailed && statusEvent.Final {
 			foundFailed = true
 
 			// Validate the failed event message
@@ -382,9 +384,9 @@ func TestMemTaskMgr_OnSendTaskSub_Error(t *testing.T) {
 	assert.True(t, foundFailed, "Should have received a Failed state event")
 
 	// Double check task state via OnGetTask
-	task, err := tm.OnGetTask(context.Background(), TaskQueryParams{ID: taskID})
+	task, err := tm.OnGetTask(context.Background(), protocol.TaskQueryParams{ID: taskID})
 	require.NoError(t, err)
-	assertTaskStatus(t, task, taskID, TaskStateFailed)
+	assertTaskStatus(t, task, taskID, protocol.TaskStateFailed)
 }
 
 func TestMemoryTaskManager_OnGetTask(t *testing.T) {
@@ -394,15 +396,15 @@ func TestMemoryTaskManager_OnGetTask(t *testing.T) {
 
 	taskID := "test-get-1"
 	// Explicitly create TextPart first
-	helloPart := NewTextPart("Hello")
-	_, okDirect := interface{}(helloPart).(TextPart) // Check value type
+	helloPart := protocol.NewTextPart("Hello")
+	_, okDirect := interface{}(helloPart).(protocol.TextPart) // Check value type
 	require.True(t, okDirect, "helloPart should be assertable to TextPart")
 
-	userMsg := Message{Role: MessageRoleUser, Parts: []Part{helloPart}}
-	_, okInSliceImmediate := userMsg.Parts[0].(TextPart) // Check value type
+	userMsg := protocol.Message{Role: protocol.MessageRoleUser, Parts: []protocol.Part{helloPart}}
+	_, okInSliceImmediate := userMsg.Parts[0].(protocol.TextPart) // Check value type
 	require.True(t, okInSliceImmediate, "Part in userMsg slice should be assertable immediately to TextPart")
 
-	params := SendTaskParams{
+	params := protocol.SendTaskParams{
 		ID:       taskID,
 		Message:  userMsg,
 		Metadata: map[string]interface{}{"meta1": "value1"},
@@ -413,12 +415,12 @@ func TestMemoryTaskManager_OnGetTask(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get the task without history
-	getParams := TaskQueryParams{ID: taskID}
+	getParams := protocol.TaskQueryParams{ID: taskID}
 	task, err := tm.OnGetTask(context.Background(), getParams)
 	require.NoError(t, err)
 	require.NotNil(t, task)
 	assert.Equal(t, taskID, task.ID)
-	assert.Equal(t, TaskStateCompleted, task.Status.State) // From mock processor
+	assert.Equal(t, protocol.TaskStateCompleted, task.Status.State) // From mock processor
 	assert.Equal(t, "value1", task.Metadata["meta1"])
 	assert.Nil(t, task.History, "History should be nil when not requested")
 
@@ -439,11 +441,11 @@ func TestMemoryTaskManager_OnGetTask(t *testing.T) {
 	var historyPartTypeOK bool
 
 	// Try both value and pointer type assertions
-	if textPart, ok := historyPart.(TextPart); ok {
+	if textPart, ok := historyPart.(protocol.TextPart); ok {
 		historyText = textPart.Text
 		historyPartTypeOK = true
 		t.Logf("Found TextPart value type in history")
-	} else if textPartPtr, ok := historyPart.(*TextPart); ok {
+	} else if textPartPtr, ok := historyPart.(*protocol.TextPart); ok {
 		historyText = textPartPtr.Text
 		historyPartTypeOK = true
 		t.Logf("Found *TextPart pointer type in history")
@@ -474,7 +476,7 @@ func TestMemoryTaskManager_OnGetTask(t *testing.T) {
 func TestMemoryTaskManager_OnCancelTask(t *testing.T) {
 	// Setup a processor with a delayed execution to allow cancellation during processing
 	processor := &mockProcessor{
-		processFunc: func(ctx context.Context, taskID string, msg Message, handle TaskHandle) error {
+		processFunc: func(ctx context.Context, taskID string, msg protocol.Message, handle TaskHandle) error {
 			// Create a channel to track if context cancellation is received
 			done := make(chan struct{})
 			canceled := make(chan struct{})
@@ -508,9 +510,9 @@ func TestMemoryTaskManager_OnCancelTask(t *testing.T) {
 
 	// Create a task
 	taskID := "test-cancel-task"
-	params := SendTaskParams{
+	params := protocol.SendTaskParams{
 		ID:      taskID,
-		Message: Message{Role: MessageRoleUser, Parts: []Part{NewTextPart("Test task for cancellation")}},
+		Message: protocol.Message{Role: protocol.MessageRoleUser, Parts: []protocol.Part{protocol.NewTextPart("Test task for cancellation")}},
 	}
 
 	// Start task with subscription to monitor events
@@ -521,34 +523,34 @@ func TestMemoryTaskManager_OnCancelTask(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Verify task is in working state before cancellation
-	task, err := tm.OnGetTask(context.Background(), TaskQueryParams{ID: taskID})
+	task, err := tm.OnGetTask(context.Background(), protocol.TaskQueryParams{ID: taskID})
 	require.NoError(t, err)
-	assert.Equal(t, TaskStateWorking, task.Status.State)
+	assert.Equal(t, protocol.TaskStateWorking, task.Status.State)
 
 	// Now cancel the task
-	cancelParams := TaskIDParams{ID: taskID}
+	cancelParams := protocol.TaskIDParams{ID: taskID}
 	canceledTask, err := tm.OnCancelTask(context.Background(), cancelParams)
 	require.NoError(t, err)
 	require.NotNil(t, canceledTask)
 
 	// Wait a little bit for the cancellation to fully propagate if needed
-	if canceledTask.Status.State != TaskStateCanceled {
+	if canceledTask.Status.State != protocol.TaskStateCanceled {
 		// Poll for a short time until the task shows as canceled
 		deadline := time.Now().Add(100 * time.Millisecond)
 		for time.Now().Before(deadline) {
-			canceledTask, err = tm.OnGetTask(context.Background(), TaskQueryParams{ID: taskID})
+			canceledTask, err = tm.OnGetTask(context.Background(), protocol.TaskQueryParams{ID: taskID})
 			require.NoError(t, err)
-			if canceledTask.Status.State == TaskStateCanceled {
+			if canceledTask.Status.State == protocol.TaskStateCanceled {
 				break
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
 
-	assert.Equal(t, TaskStateCanceled, canceledTask.Status.State)
+	assert.Equal(t, protocol.TaskStateCanceled, canceledTask.Status.State)
 
 	// Collect events with timeout
-	var lastEvent TaskEvent
+	var lastEvent protocol.TaskEvent
 	eventsCollected := false
 	timeout := time.After(1 * time.Second)
 
@@ -561,8 +563,8 @@ func TestMemoryTaskManager_OnCancelTask(t *testing.T) {
 			}
 			lastEvent = event
 			// If we see the final canceled event, don't wait for channel close
-			if statusEvent, ok := event.(TaskStatusUpdateEvent); ok &&
-				statusEvent.Status.State == TaskStateCanceled && statusEvent.Final {
+			if statusEvent, ok := event.(protocol.TaskStatusUpdateEvent); ok &&
+				statusEvent.Status.State == protocol.TaskStateCanceled && statusEvent.Final {
 				eventsCollected = true
 			}
 		case <-timeout:
@@ -573,15 +575,15 @@ func TestMemoryTaskManager_OnCancelTask(t *testing.T) {
 
 	// Verify last event indicates cancellation if we got events
 	if lastEvent != nil {
-		statusEvent, ok := lastEvent.(TaskStatusUpdateEvent)
+		statusEvent, ok := lastEvent.(protocol.TaskStatusUpdateEvent)
 		require.True(t, ok, "Expected TaskStatusUpdateEvent")
 		assert.Equal(t, taskID, statusEvent.ID)
-		assert.Equal(t, TaskStateCanceled, statusEvent.Status.State)
+		assert.Equal(t, protocol.TaskStateCanceled, statusEvent.Status.State)
 		assert.True(t, statusEvent.Final)
 	}
 
 	// Test cancelling a non-existent task
-	_, err = tm.OnCancelTask(context.Background(), TaskIDParams{ID: "non-existent-task"})
+	_, err = tm.OnCancelTask(context.Background(), protocol.TaskIDParams{ID: "non-existent-task"})
 	assert.Error(t, err)
 	// Check if the error is a jsonrpc.Error with the TaskNotFound error code
 	jsonRPCErr, ok := err.(*jsonrpc.Error)
@@ -596,13 +598,13 @@ func TestMemoryTaskManager_OnCancelTask(t *testing.T) {
 	jsonRPCErr, ok = err.(*jsonrpc.Error)
 	assert.True(t, ok, "Expected jsonrpc.Error")
 	assert.Equal(t, ErrCodeTaskFinal, jsonRPCErr.Code)
-	assert.Equal(t, TaskStateCanceled, againCanceledTask.Status.State)
+	assert.Equal(t, protocol.TaskStateCanceled, againCanceledTask.Status.State)
 
 	// Test cancelling a completed task (should return task without error)
 	completedTaskID := "completed-task"
-	completedParams := SendTaskParams{
+	completedParams := protocol.SendTaskParams{
 		ID:      completedTaskID,
-		Message: Message{Role: MessageRoleUser, Parts: []Part{NewTextPart("Completed task")}},
+		Message: protocol.Message{Role: protocol.MessageRoleUser, Parts: []protocol.Part{protocol.NewTextPart("Completed task")}},
 	}
 
 	// Use the basic mock processor behavior (completes task quickly)
@@ -611,31 +613,31 @@ func TestMemoryTaskManager_OnCancelTask(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify task is in completed state
-	completedTask, err := tm.OnGetTask(context.Background(), TaskQueryParams{ID: completedTaskID})
+	completedTask, err := tm.OnGetTask(context.Background(), protocol.TaskQueryParams{ID: completedTaskID})
 	require.NoError(t, err)
-	assert.Equal(t, TaskStateCompleted, completedTask.Status.State)
+	assert.Equal(t, protocol.TaskStateCompleted, completedTask.Status.State)
 
 	// Try to cancel the completed task
-	againCompletedTask, err := tm.OnCancelTask(context.Background(), TaskIDParams{ID: completedTaskID})
+	againCompletedTask, err := tm.OnCancelTask(context.Background(), protocol.TaskIDParams{ID: completedTaskID})
 	// Update expectation: can't cancel a task that's already completed
 	assert.Error(t, err)
 	jsonRPCErr, ok = err.(*jsonrpc.Error)
 	assert.True(t, ok, "Expected jsonrpc.Error for canceling completed task")
 	assert.Equal(t, ErrCodeTaskFinal, jsonRPCErr.Code)
-	assert.Equal(t, TaskStateCompleted, againCompletedTask.Status.State,
+	assert.Equal(t, protocol.TaskStateCompleted, againCompletedTask.Status.State,
 		"Already completed task should remain in completed state after cancel attempt")
 }
 
 // --- Test Helpers ---
 
 func TestIsFinalState(t *testing.T) {
-	assert.True(t, isFinalState(TaskStateCompleted))
-	assert.True(t, isFinalState(TaskStateFailed))
-	assert.True(t, isFinalState(TaskStateCanceled))
-	assert.False(t, isFinalState(TaskStateWorking))
-	assert.False(t, isFinalState(TaskStateSubmitted))     // Check defined non-final state.
-	assert.False(t, isFinalState(TaskStateInputRequired)) // Check defined non-final state.
-	assert.False(t, isFinalState(TaskState("other")))
+	assert.True(t, isFinalState(protocol.TaskStateCompleted))
+	assert.True(t, isFinalState(protocol.TaskStateFailed))
+	assert.True(t, isFinalState(protocol.TaskStateCanceled))
+	assert.False(t, isFinalState(protocol.TaskStateWorking))
+	assert.False(t, isFinalState(protocol.TaskStateSubmitted))     // Check defined non-final state.
+	assert.False(t, isFinalState(protocol.TaskStateInputRequired)) // Check defined non-final state.
+	assert.False(t, isFinalState(protocol.TaskState("other")))
 }
 
 func TestMemTaskManagerPushNotif(t *testing.T) {
@@ -645,9 +647,9 @@ func TestMemTaskManagerPushNotif(t *testing.T) {
 
 	// Create a task first
 	taskID := "push-notification-task"
-	params := SendTaskParams{
+	params := protocol.SendTaskParams{
 		ID:      taskID,
-		Message: Message{Role: MessageRoleUser, Parts: []Part{NewTextPart("Test task for push notifications")}},
+		Message: protocol.Message{Role: protocol.MessageRoleUser, Parts: []protocol.Part{protocol.NewTextPart("Test task for push notifications")}},
 	}
 
 	// Start the task
@@ -655,12 +657,12 @@ func TestMemTaskManagerPushNotif(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test setting push notification config
-	pushConfig := TaskPushNotificationConfig{
+	pushConfig := protocol.TaskPushNotificationConfig{
 		ID: taskID,
-		PushNotificationConfig: PushNotificationConfig{
+		PushNotificationConfig: protocol.PushNotificationConfig{
 			URL:   "https://example.com/webhook",
 			Token: "test-token",
-			Authentication: &AuthenticationInfo{
+			Authentication: &protocol.AuthenticationInfo{
 				Schemes:     []string{"Bearer"},
 				Credentials: "Bearer test-token",
 			},
@@ -683,7 +685,7 @@ func TestMemTaskManagerPushNotif(t *testing.T) {
 	assert.Equal(t, "high", resultConfig.PushNotificationConfig.Metadata["priority"])
 
 	// Test OnPushNotificationGet
-	getParams := TaskIDParams{ID: taskID}
+	getParams := protocol.TaskIDParams{ID: taskID}
 	fetchedConfig, err := tm.OnPushNotificationGet(context.Background(), getParams)
 	require.NoError(t, err)
 	require.NotNil(t, fetchedConfig)
@@ -697,9 +699,9 @@ func TestMemTaskManagerPushNotif(t *testing.T) {
 	assert.Equal(t, "high", fetchedConfig.PushNotificationConfig.Metadata["priority"])
 
 	// Test setting push notification for non-existent task
-	nonExistentConfig := TaskPushNotificationConfig{
+	nonExistentConfig := protocol.TaskPushNotificationConfig{
 		ID: "non-existent-task",
-		PushNotificationConfig: PushNotificationConfig{
+		PushNotificationConfig: protocol.PushNotificationConfig{
 			URL: "https://example.com/webhook",
 		},
 	}
@@ -710,7 +712,7 @@ func TestMemTaskManagerPushNotif(t *testing.T) {
 	assert.Equal(t, ErrCodeTaskNotFound, jsonRPCErr.Code)
 
 	// Test getting push notification for non-existent task
-	_, err = tm.OnPushNotificationGet(context.Background(), TaskIDParams{ID: "non-existent-task"})
+	_, err = tm.OnPushNotificationGet(context.Background(), protocol.TaskIDParams{ID: "non-existent-task"})
 	assert.Error(t, err)
 	jsonRPCErr, ok = err.(*jsonrpc.Error)
 	assert.True(t, ok, "Expected jsonrpc.Error")
@@ -719,27 +721,27 @@ func TestMemTaskManagerPushNotif(t *testing.T) {
 	// Test getting push notification for task without config
 	// Create a new task without push notification config
 	newTaskID := "task-without-push-config"
-	newParams := SendTaskParams{
+	newParams := protocol.SendTaskParams{
 		ID:      newTaskID,
-		Message: Message{Role: MessageRoleUser, Parts: []Part{NewTextPart("Task without push config")}},
+		Message: protocol.Message{Role: protocol.MessageRoleUser, Parts: []protocol.Part{protocol.NewTextPart("Task without push config")}},
 	}
 	_, err = tm.OnSendTask(context.Background(), newParams)
 	require.NoError(t, err)
 
 	// Try to get push notification config
-	_, err = tm.OnPushNotificationGet(context.Background(), TaskIDParams{ID: newTaskID})
+	_, err = tm.OnPushNotificationGet(context.Background(), protocol.TaskIDParams{ID: newTaskID})
 	assert.Error(t, err)
 	jsonRPCErr, ok = err.(*jsonrpc.Error)
 	assert.True(t, ok, "Expected jsonrpc.Error")
 	assert.Equal(t, ErrCodePushNotificationNotConfigured, jsonRPCErr.Code)
 
 	// Update the push notification config
-	updatedConfig := TaskPushNotificationConfig{
+	updatedConfig := protocol.TaskPushNotificationConfig{
 		ID: taskID,
-		PushNotificationConfig: PushNotificationConfig{
+		PushNotificationConfig: protocol.PushNotificationConfig{
 			URL:   "https://updated-example.com/webhook",
 			Token: "updated-token",
-			Authentication: &AuthenticationInfo{
+			Authentication: &protocol.AuthenticationInfo{
 				Schemes:     []string{"Bearer"},
 				Credentials: "Bearer updated-token",
 			},
@@ -767,11 +769,11 @@ func TestMemTaskManagerPushNotif(t *testing.T) {
 func TestMemoryTaskManager_OnResubscribe(t *testing.T) {
 	// Create a processor that will take longer to complete so we can test resubscribe
 	processor := &mockProcessor{
-		processFunc: func(ctx context.Context, taskID string, msg Message, handle TaskHandle) error {
+		processFunc: func(ctx context.Context, taskID string, msg protocol.Message, handle TaskHandle) error {
 			// Set initial status and send an intermediate message
-			err := handle.UpdateStatus(TaskStateWorking, &Message{
-				Role:  MessageRoleAgent,
-				Parts: []Part{NewTextPart("Working on task...")},
+			err := handle.UpdateStatus(protocol.TaskStateWorking, &protocol.Message{
+				Role:  protocol.MessageRoleAgent,
+				Parts: []protocol.Part{protocol.NewTextPart("Working on task...")},
 			})
 			if err != nil {
 				return err
@@ -786,9 +788,9 @@ func TestMemoryTaskManager_OnResubscribe(t *testing.T) {
 			}
 
 			// Complete the task
-			err = handle.UpdateStatus(TaskStateCompleted, &Message{
-				Role:  MessageRoleAgent,
-				Parts: []Part{NewTextPart("Task completed!")},
+			err = handle.UpdateStatus(protocol.TaskStateCompleted, &protocol.Message{
+				Role:  protocol.MessageRoleAgent,
+				Parts: []protocol.Part{protocol.NewTextPart("Task completed!")},
 			})
 			return err
 		},
@@ -799,9 +801,9 @@ func TestMemoryTaskManager_OnResubscribe(t *testing.T) {
 
 	// Create a task
 	taskID := "resubscribe-task"
-	params := SendTaskParams{
+	params := protocol.SendTaskParams{
 		ID:      taskID,
-		Message: Message{Role: MessageRoleUser, Parts: []Part{NewTextPart("Test task for resubscribe")}},
+		Message: protocol.Message{Role: protocol.MessageRoleUser, Parts: []protocol.Part{protocol.NewTextPart("Test task for resubscribe")}},
 	}
 
 	// Start task with subscription
@@ -812,8 +814,8 @@ func TestMemoryTaskManager_OnResubscribe(t *testing.T) {
 	// Wait for task to start processing (wait for Working state)
 	var receivedWorkingEvent bool
 	for event := range originalEventChan {
-		statusEvent, ok := event.(TaskStatusUpdateEvent)
-		if ok && statusEvent.Status.State == TaskStateWorking {
+		statusEvent, ok := event.(protocol.TaskStatusUpdateEvent)
+		if ok && statusEvent.Status.State == protocol.TaskStateWorking {
 			receivedWorkingEvent = true
 			break
 		}
@@ -824,19 +826,19 @@ func TestMemoryTaskManager_OnResubscribe(t *testing.T) {
 	assert.True(t, receivedWorkingEvent, "Should have received Working state event")
 
 	// Now simulate a client disconnect and reconnect by resubscribing
-	resubscribeParams := TaskIDParams{ID: taskID}
+	resubscribeParams := protocol.TaskIDParams{ID: taskID}
 	resubscribeEventChan, err := tm.OnResubscribe(context.Background(), resubscribeParams)
 	require.NoError(t, err)
 	require.NotNil(t, resubscribeEventChan, "Should get a valid event channel from resubscribe")
 
 	// Read events from the resubscribe channel until we get a final event
 	var gotFinalEvent bool
-	var statusUpdateEvent TaskStatusUpdateEvent
+	var statusUpdateEvent protocol.TaskStatusUpdateEvent
 
 	for event := range resubscribeEventChan {
 		if event.IsFinal() {
 			// Try to type assert it to a status update event
-			statusUpdate, ok := event.(TaskStatusUpdateEvent)
+			statusUpdate, ok := event.(protocol.TaskStatusUpdateEvent)
 			if ok {
 				statusUpdateEvent = statusUpdate
 				gotFinalEvent = true
@@ -847,11 +849,11 @@ func TestMemoryTaskManager_OnResubscribe(t *testing.T) {
 
 	// There should be a final event
 	assert.True(t, gotFinalEvent, "Should have received a final event")
-	assert.Equal(t, TaskStateCompleted, statusUpdateEvent.Status.State)
+	assert.Equal(t, protocol.TaskStateCompleted, statusUpdateEvent.Status.State)
 	assert.True(t, statusUpdateEvent.Final)
 
 	// Test resubscribing to a non-existent task
-	_, err = tm.OnResubscribe(context.Background(), TaskIDParams{ID: "non-existent-task"})
+	_, err = tm.OnResubscribe(context.Background(), protocol.TaskIDParams{ID: "non-existent-task"})
 	assert.Error(t, err)
 	jsonRPCErr, ok := err.(*jsonrpc.Error)
 	assert.True(t, ok, "Expected jsonrpc.Error")
@@ -860,9 +862,9 @@ func TestMemoryTaskManager_OnResubscribe(t *testing.T) {
 	// Test resubscribing to an already completed task
 	// Should get a channel with the final event and then close
 	completedTaskID := "completed-resubscribe-task"
-	completedParams := SendTaskParams{
+	completedParams := protocol.SendTaskParams{
 		ID:      completedTaskID,
-		Message: Message{Role: MessageRoleUser, Parts: []Part{NewTextPart("Already completed task")}},
+		Message: protocol.Message{Role: protocol.MessageRoleUser, Parts: []protocol.Part{protocol.NewTextPart("Already completed task")}},
 	}
 
 	_, err = tm.OnSendTask(context.Background(), completedParams)
@@ -870,21 +872,21 @@ func TestMemoryTaskManager_OnResubscribe(t *testing.T) {
 
 	// The task should be completed now, attempt to resubscribe
 	completedResubChan, err := tm.OnResubscribe(
-		context.Background(), TaskIDParams{ID: completedTaskID},
+		context.Background(), protocol.TaskIDParams{ID: completedTaskID},
 	)
 	require.NoError(t, err)
 	require.NotNil(t, completedResubChan)
 
 	// Read all events from the channel
-	completedEvents := []TaskEvent{}
+	completedEvents := []protocol.TaskEvent{}
 	for event := range completedResubChan {
 		completedEvents = append(completedEvents, event)
 	}
 
 	// Should have received a single event with the final status
 	require.Len(t, completedEvents, 1, "Should get exactly one event for a completed task")
-	completedStatusEvent, ok := completedEvents[0].(TaskStatusUpdateEvent)
+	completedStatusEvent, ok := completedEvents[0].(protocol.TaskStatusUpdateEvent)
 	require.True(t, ok, "Event should be a TaskStatusUpdateEvent")
-	assert.Equal(t, TaskStateCompleted, completedStatusEvent.Status.State)
+	assert.Equal(t, protocol.TaskStateCompleted, completedStatusEvent.Status.State)
 	assert.True(t, completedStatusEvent.Final)
 }

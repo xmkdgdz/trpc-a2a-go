@@ -9,6 +9,10 @@
 
 package taskmanager
 
+import (
+	"trpc.group/trpc-go/a2a-go/protocol"
+)
+
 // memoryTaskHandle implements the TaskHandle interface, providing callbacks
 // for a specific task being processed by a TaskProcessor.
 // It holds a reference back to the MemoryTaskManager.
@@ -18,11 +22,17 @@ type memoryTaskHandle struct {
 }
 
 // UpdateStatus implements TaskHandle.
-func (h *memoryTaskHandle) UpdateStatus(state TaskState, msg *Message) error {
+func (h *memoryTaskHandle) UpdateStatus(state protocol.TaskState, msg *protocol.Message) error {
 	return h.manager.UpdateTaskStatus(h.taskID, state, msg)
 }
 
 // AddArtifact implements TaskHandle.
-func (h *memoryTaskHandle) AddArtifact(artifact Artifact) error {
+func (h *memoryTaskHandle) AddArtifact(artifact protocol.Artifact) error {
 	return h.manager.AddArtifact(h.taskID, artifact)
+}
+
+// isFinalState checks if a TaskState represents a terminal state.
+// Not exported as it's an internal helper.
+func isFinalState(state protocol.TaskState) bool {
+	return state == protocol.TaskStateCompleted || state == protocol.TaskStateFailed || state == protocol.TaskStateCanceled
 }

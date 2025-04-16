@@ -14,6 +14,7 @@ import (
 	"fmt"
 
 	"trpc.group/trpc-go/a2a-go/jsonrpc"
+	"trpc.group/trpc-go/a2a-go/protocol"
 )
 
 // Custom JSON-RPC error codes specific to the TaskManager.
@@ -36,7 +37,7 @@ func ErrTaskNotFound(taskID string) *jsonrpc.Error {
 // ErrTaskFinalState creates a JSON-RPC error for attempting an operation on a task
 // that is already in a final state (completed, failed, cancelled).
 // Exported function.
-func ErrTaskFinalState(taskID string, state TaskState) *jsonrpc.Error {
+func ErrTaskFinalState(taskID string, state protocol.TaskState) *jsonrpc.Error {
 	return &jsonrpc.Error{
 		Code:    ErrCodeTaskFinal,
 		Message: "Task is in final state",

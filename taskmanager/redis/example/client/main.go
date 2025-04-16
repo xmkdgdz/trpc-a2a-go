@@ -19,11 +19,11 @@ import (
 	"time"
 
 	"trpc.group/trpc-go/a2a-go/client"
-	"trpc.group/trpc-go/a2a-go/taskmanager"
+	"trpc.group/trpc-go/a2a-go/protocol"
 )
 
 // printTaskDetails prints the details of a task to the console.
-func printTaskDetails(task *taskmanager.Task) {
+func printTaskDetails(task *protocol.Task) {
 	log.Printf("Task ID: %s", task.ID)
 	log.Printf("State: %s", task.Status.State)
 	log.Printf("Timestamp: %s", task.Status.Timestamp)
@@ -42,14 +42,14 @@ func printTaskDetails(task *taskmanager.Task) {
 }
 
 // messageToString converts a message to a string representation.
-func messageToString(msg taskmanager.Message) string {
+func messageToString(msg protocol.Message) string {
 	if len(msg.Parts) == 0 {
 		return "[empty message]"
 	}
 
 	var result strings.Builder
 	for _, part := range msg.Parts {
-		if textPart, ok := part.(taskmanager.TextPart); ok {
+		if textPart, ok := part.(protocol.TextPart); ok {
 			result.WriteString(textPart.Text)
 		} else {
 			result.WriteString("[non-text part]")
@@ -59,10 +59,10 @@ func messageToString(msg taskmanager.Message) string {
 }
 
 // artifactToString converts an artifact to a string representation.
-func artifactToString(artifact taskmanager.Artifact) string {
+func artifactToString(artifact protocol.Artifact) string {
 	var parts []string
 	for _, part := range artifact.Parts {
-		if textPart, ok := part.(taskmanager.TextPart); ok {
+		if textPart, ok := part.(protocol.TextPart); ok {
 			parts = append(parts, textPart.Text)
 		} else {
 			parts = append(parts, "[non-text part]")
@@ -84,22 +84,22 @@ func artifactToString(artifact taskmanager.Artifact) string {
 }
 
 // pollTaskUntilDone polls a task until it reaches a final state.
-func pollTaskUntilDone(ctx context.Context, a2aClient *client.A2AClient, taskID string) (*taskmanager.Task, error) {
+func pollTaskUntilDone(ctx context.Context, a2aClient *client.A2AClient, taskID string) (*protocol.Task, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			task, err := a2aClient.GetTasks(ctx, taskmanager.TaskQueryParams{ID: taskID})
+			task, err := a2aClient.GetTasks(ctx, protocol.TaskQueryParams{ID: taskID})
 			if err != nil {
 				return nil, fmt.Errorf("failed to get task: %w", err)
 			}
 
 			// Check if the task is done
-			if task.Status.State == taskmanager.TaskStateCompleted ||
-				task.Status.State == taskmanager.TaskStateFailed ||
-				task.Status.State == taskmanager.TaskStateCanceled {
+			if task.Status.State == protocol.TaskStateCompleted ||
+				task.Status.State == protocol.TaskStateFailed ||
+				task.Status.State == protocol.TaskStateCanceled {
 				return task, nil
 			}
 
@@ -122,13 +122,13 @@ func generateTaskID(providedID string) string {
 }
 
 // createSendTaskParams creates parameters for sending a task.
-func createSendTaskParams(taskID, message, idempotencyKey string) taskmanager.SendTaskParams {
-	params := taskmanager.SendTaskParams{
+func createSendTaskParams(taskID, message, idempotencyKey string) protocol.SendTaskParams {
+	params := protocol.SendTaskParams{
 		ID: taskID,
-		Message: taskmanager.Message{
-			Role: taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{
-				taskmanager.NewTextPart(message),
+		Message: protocol.Message{
+			Role: protocol.MessageRoleUser,
+			Parts: []protocol.Part{
+				protocol.NewTextPart(message),
 			},
 		},
 	}
@@ -169,7 +169,7 @@ func handleSendOperation(ctx context.Context, a2aClient *client.A2AClient, taskI
 }
 
 // printFinalTaskStatus prints the final status of a completed task.
-func printFinalTaskStatus(task *taskmanager.Task) {
+func printFinalTaskStatus(task *protocol.Task) {
 	log.Printf("Task %s final state: %s", task.ID, task.Status.State)
 
 	// Print the artifacts
@@ -192,7 +192,7 @@ func handleGetOperation(ctx context.Context, a2aClient *client.A2AClient, taskID
 	}
 
 	// Create query parameters
-	params := taskmanager.TaskQueryParams{
+	params := protocol.TaskQueryParams{
 		ID:            taskID,
 		HistoryLength: nil, // Get default history length
 	}
@@ -214,7 +214,7 @@ func handleCancelOperation(ctx context.Context, a2aClient *client.A2AClient, tas
 	}
 
 	// Create cancel parameters
-	params := taskmanager.TaskIDParams{
+	params := protocol.TaskIDParams{
 		ID: taskID,
 	}
 
@@ -228,12 +228,12 @@ func handleCancelOperation(ctx context.Context, a2aClient *client.A2AClient, tas
 }
 
 // processStreamEvents processes events from the streaming API.
-func processStreamEvents(eventChan <-chan taskmanager.TaskEvent) {
+func processStreamEvents(eventChan <-chan protocol.TaskEvent) {
 	for event := range eventChan {
 		switch e := event.(type) {
-		case taskmanager.TaskStatusUpdateEvent:
+		case protocol.TaskStatusUpdateEvent:
 			handleStatusUpdateEvent(e)
-		case taskmanager.TaskArtifactUpdateEvent:
+		case protocol.TaskArtifactUpdateEvent:
 			handleArtifactUpdateEvent(e)
 		default:
 			log.Printf("Unknown event type: %T", event)
@@ -242,7 +242,7 @@ func processStreamEvents(eventChan <-chan taskmanager.TaskEvent) {
 }
 
 // handleStatusUpdateEvent processes a status update event.
-func handleStatusUpdateEvent(event taskmanager.TaskStatusUpdateEvent) {
+func handleStatusUpdateEvent(event protocol.TaskStatusUpdateEvent) {
 	log.Printf("Status update: %s", event.Status.State)
 	if event.Final {
 		log.Printf("Final status: %s", event.Status.State)
@@ -253,7 +253,7 @@ func handleStatusUpdateEvent(event taskmanager.TaskStatusUpdateEvent) {
 }
 
 // handleArtifactUpdateEvent processes an artifact update event.
-func handleArtifactUpdateEvent(event taskmanager.TaskArtifactUpdateEvent) {
+func handleArtifactUpdateEvent(event protocol.TaskArtifactUpdateEvent) {
 	name := "unnamed"
 	if event.Artifact.Name != nil {
 		name = *event.Artifact.Name

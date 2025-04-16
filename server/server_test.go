@@ -23,8 +23,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"trpc.group/trpc-go/a2a-go/internal/sse"
 	"trpc.group/trpc-go/a2a-go/jsonrpc"
+	"trpc.group/trpc-go/a2a-go/protocol"
 	"trpc.group/trpc-go/a2a-go/taskmanager"
 )
 
@@ -129,17 +131,17 @@ func TestA2AServer_HandleJSONRPC_Methods(t *testing.T) {
 	defer testServer.Close()
 
 	taskID := "test-task-rpc-1"
-	initialMsg := taskmanager.Message{Role: taskmanager.MessageRoleUser, Parts: []taskmanager.Part{taskmanager.NewTextPart("Input data")}}
+	initialMsg := protocol.Message{Role: protocol.MessageRoleUser, Parts: []protocol.Part{protocol.NewTextPart("Input data")}}
 
 	// --- Test tasks/send ---
 	t.Run("tasks/send success", func(t *testing.T) {
-		mockTM.SendResponse = &taskmanager.Task{
+		mockTM.SendResponse = &protocol.Task{
 			ID:     taskID,
-			Status: taskmanager.TaskStatus{State: taskmanager.TaskStateWorking},
+			Status: protocol.TaskStatus{State: protocol.TaskStateWorking},
 		}
 		mockTM.SendError = nil
 
-		params := taskmanager.SendTaskParams{ID: taskID, Message: initialMsg}
+		params := protocol.SendTaskParams{ID: taskID, Message: initialMsg}
 		resp := performJSONRPCRequest(t, testServer, "tasks/send", params, taskID)
 
 		assert.Nil(t, resp.Error, "Response error should be nil")
@@ -148,18 +150,18 @@ func TestA2AServer_HandleJSONRPC_Methods(t *testing.T) {
 		// Remarshal result interface{} to bytes
 		resultBytes, err := json.Marshal(resp.Result)
 		require.NoError(t, err, "Failed to remarshal result for Task unmarshalling")
-		var resultTask taskmanager.Task
+		var resultTask protocol.Task
 		err = json.Unmarshal(resultBytes, &resultTask)
 		require.NoError(t, err, "Failed to unmarshal task from remarshalled result")
 		assert.Equal(t, taskID, resultTask.ID)
-		assert.Equal(t, taskmanager.TaskStateWorking, resultTask.Status.State)
+		assert.Equal(t, protocol.TaskStateWorking, resultTask.Status.State)
 	})
 
 	t.Run("tasks/send error", func(t *testing.T) {
 		mockTM.SendResponse = nil
 		mockTM.SendError = fmt.Errorf("mock send task failed")
 
-		params := taskmanager.SendTaskParams{ID: "task-send-fail", Message: initialMsg}
+		params := protocol.SendTaskParams{ID: "task-send-fail", Message: initialMsg}
 		resp := performJSONRPCRequest(t, testServer, "tasks/send", params, "req-send-fail")
 
 		assert.Nil(t, resp.Result, "Response result should be nil")
@@ -170,14 +172,14 @@ func TestA2AServer_HandleJSONRPC_Methods(t *testing.T) {
 
 	// --- Test tasks/get ---
 	t.Run("tasks/get success", func(t *testing.T) {
-		mockTM.GetResponse = &taskmanager.Task{
+		mockTM.GetResponse = &protocol.Task{
 			ID:     taskID,
-			Status: taskmanager.TaskStatus{State: taskmanager.TaskStateCompleted},
+			Status: protocol.TaskStatus{State: protocol.TaskStateCompleted},
 		}
 		mockTM.GetError = nil
 		mockTM.tasks[taskID] = mockTM.GetResponse // Ensure task exists in mock
 
-		params := taskmanager.TaskQueryParams{ID: taskID}
+		params := protocol.TaskQueryParams{ID: taskID}
 		resp := performJSONRPCRequest(t, testServer, "tasks/get", params, "req-get-1")
 
 		assert.Nil(t, resp.Error, "Response error should be nil")
@@ -186,17 +188,17 @@ func TestA2AServer_HandleJSONRPC_Methods(t *testing.T) {
 		// Remarshal result interface{} to bytes
 		resultBytes, err := json.Marshal(resp.Result)
 		require.NoError(t, err, "Failed to remarshal result for Task unmarshalling")
-		var resultTask taskmanager.Task
+		var resultTask protocol.Task
 		err = json.Unmarshal(resultBytes, &resultTask)
 		require.NoError(t, err, "Failed to unmarshal task from remarshalled result")
 		assert.Equal(t, taskID, resultTask.ID)
-		assert.Equal(t, taskmanager.TaskStateCompleted, resultTask.Status.State)
+		assert.Equal(t, protocol.TaskStateCompleted, resultTask.Status.State)
 	})
 
 	t.Run("tasks/get not found", func(t *testing.T) {
 		mockTM.GetError = taskmanager.ErrTaskNotFound("task-not-found")
 
-		params := taskmanager.TaskQueryParams{ID: "task-not-found"}
+		params := protocol.TaskQueryParams{ID: "task-not-found"}
 		resp := performJSONRPCRequest(t, testServer, "tasks/get", params, "req-get-nf")
 
 		assert.Nil(t, resp.Result, "Response result should be nil")
@@ -206,15 +208,15 @@ func TestA2AServer_HandleJSONRPC_Methods(t *testing.T) {
 
 	// --- Test tasks/cancel ---
 	t.Run("tasks/cancel success", func(t *testing.T) {
-		mockTM.CancelResponse = &taskmanager.Task{
+		mockTM.CancelResponse = &protocol.Task{
 			ID:     taskID,
-			Status: taskmanager.TaskStatus{State: taskmanager.TaskStateCanceled},
+			Status: protocol.TaskStatus{State: protocol.TaskStateCanceled},
 		}
 		mockTM.CancelError = nil
 		// Ensure task exists in mock (e.g., from previous send test)
-		mockTM.tasks[taskID] = &taskmanager.Task{ID: taskID, Status: taskmanager.TaskStatus{State: taskmanager.TaskStateWorking}}
+		mockTM.tasks[taskID] = &protocol.Task{ID: taskID, Status: protocol.TaskStatus{State: protocol.TaskStateWorking}}
 
-		params := taskmanager.TaskIDParams{ID: taskID}
+		params := protocol.TaskIDParams{ID: taskID}
 		resp := performJSONRPCRequest(t, testServer, "tasks/cancel", params, "req-cancel-1")
 
 		assert.Nil(t, resp.Error, "Response error should be nil")
@@ -223,17 +225,17 @@ func TestA2AServer_HandleJSONRPC_Methods(t *testing.T) {
 		// Remarshal result interface{} to bytes
 		resultBytes, err := json.Marshal(resp.Result)
 		require.NoError(t, err, "Failed to remarshal result for Task unmarshalling")
-		var resultTask taskmanager.Task
+		var resultTask protocol.Task
 		err = json.Unmarshal(resultBytes, &resultTask)
 		require.NoError(t, err, "Failed to unmarshal task from remarshalled result")
 		assert.Equal(t, taskID, resultTask.ID)
-		assert.Equal(t, taskmanager.TaskStateCanceled, resultTask.Status.State)
+		assert.Equal(t, protocol.TaskStateCanceled, resultTask.Status.State)
 	})
 
 	t.Run("tasks/cancel not found", func(t *testing.T) {
 		mockTM.CancelError = taskmanager.ErrTaskNotFound("task-cancel-nf")
 
-		params := taskmanager.TaskIDParams{ID: "task-cancel-nf"}
+		params := protocol.TaskIDParams{ID: "task-cancel-nf"}
 		resp := performJSONRPCRequest(t, testServer, "tasks/cancel", params, "req-cancel-nf")
 
 		assert.Nil(t, resp.Result, "Response result should be nil")
@@ -261,29 +263,29 @@ func TestA2ASrv_HandleTasksSendSub_SSE(t *testing.T) {
 	defer testServer.Close()
 
 	taskID := "test-task-sse-1"
-	initialMsg := taskmanager.Message{Role: taskmanager.MessageRoleUser, Parts: []taskmanager.Part{taskmanager.NewTextPart("SSE test input")}}
+	initialMsg := protocol.Message{Role: protocol.MessageRoleUser, Parts: []protocol.Part{protocol.NewTextPart("SSE test input")}}
 
 	// Configure mock events
-	event1 := taskmanager.TaskStatusUpdateEvent{
+	event1 := protocol.TaskStatusUpdateEvent{
 		ID:     taskID,
-		Status: taskmanager.TaskStatus{State: taskmanager.TaskStateWorking},
+		Status: protocol.TaskStatus{State: protocol.TaskStateWorking},
 	}
-	event2 := taskmanager.TaskArtifactUpdateEvent{
+	event2 := protocol.TaskArtifactUpdateEvent{
 		ID: taskID,
-		Artifact: taskmanager.Artifact{
+		Artifact: protocol.Artifact{
 			Index: 0,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("Intermediate result")},
+			Parts: []protocol.Part{protocol.NewTextPart("Intermediate result")},
 		},
 	}
-	event3 := taskmanager.TaskStatusUpdateEvent{
+	event3 := protocol.TaskStatusUpdateEvent{
 		ID:     taskID,
-		Status: taskmanager.TaskStatus{State: taskmanager.TaskStateCompleted},
+		Status: protocol.TaskStatus{State: protocol.TaskStateCompleted},
 	}
-	mockTM.SubscribeEvents = []taskmanager.TaskEvent{event1, event2, event3}
+	mockTM.SubscribeEvents = []protocol.TaskEvent{event1, event2, event3}
 	mockTM.SubscribeError = nil
 
 	// Prepare SSE request
-	params := taskmanager.SendTaskParams{ID: taskID, Message: initialMsg}
+	params := protocol.SendTaskParams{ID: taskID, Message: initialMsg}
 	paramsBytes, _ := json.Marshal(params)
 	reqBody := jsonrpc.Request{
 		Message: jsonrpc.Message{JSONRPC: "2.0", ID: taskID},
@@ -311,7 +313,7 @@ func TestA2ASrv_HandleTasksSendSub_SSE(t *testing.T) {
 	// Read and verify SSE events
 	reader := sse.NewEventReader(resp.Body) // Use the client's SSE reader
 	receivedMockEventsCount := 0
-	receivedEvents := []taskmanager.TaskEvent{}
+	receivedEvents := []protocol.TaskEvent{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -328,16 +330,16 @@ func TestA2ASrv_HandleTasksSendSub_SSE(t *testing.T) {
 			continue
 		}
 
-		var event taskmanager.TaskEvent
+		var event protocol.TaskEvent
 		switch eventType {
 		case "task_status_update":
-			var statusEvent taskmanager.TaskStatusUpdateEvent
+			var statusEvent protocol.TaskStatusUpdateEvent
 			if err := json.Unmarshal(data, &statusEvent); err != nil {
 				t.Fatalf("Failed to unmarshal task_status_update: %v. Data: %s", err, string(data))
 			}
 			event = statusEvent
 		case "task_artifact_update":
-			var artifactEvent taskmanager.TaskArtifactUpdateEvent
+			var artifactEvent protocol.TaskArtifactUpdateEvent
 			if err := json.Unmarshal(data, &artifactEvent); err != nil {
 				t.Fatalf("Failed to unmarshal task_artifact_update: %v. Data: %s", err, string(data))
 			}
@@ -358,7 +360,7 @@ func TestA2ASrv_HandleTasksSendSub_SSE(t *testing.T) {
 		}
 
 		// Ignore the initial event potentially sent by the mock implementation
-		if statusUpdate, ok := event.(taskmanager.TaskStatusUpdateEvent); ok && (statusUpdate.Status.State == taskmanager.TaskStateSubmitted || statusUpdate.Status.State == taskmanager.TaskStateWorking) {
+		if statusUpdate, ok := event.(protocol.TaskStatusUpdateEvent); ok && (statusUpdate.Status.State == protocol.TaskStateSubmitted || statusUpdate.Status.State == protocol.TaskStateWorking) {
 			if receivedMockEventsCount == 0 { // Only skip the very first auto-sent event
 				continue
 			}
@@ -386,8 +388,8 @@ func TestA2ASrv_HandleTasksSendSub_SSE(t *testing.T) {
 	lastMock := mockTM.SubscribeEvents[len(mockTM.SubscribeEvents)-1]
 
 	assert.Equal(t, lastMock.IsFinal(), lastReceived.IsFinal(), "Finality of last event mismatch")
-	if lastMockStatus, ok1 := lastMock.(taskmanager.TaskStatusUpdateEvent); ok1 {
-		if lastReceivedStatus, ok2 := lastReceived.(taskmanager.TaskStatusUpdateEvent); ok2 {
+	if lastMockStatus, ok1 := lastMock.(protocol.TaskStatusUpdateEvent); ok1 {
+		if lastReceivedStatus, ok2 := lastReceived.(protocol.TaskStatusUpdateEvent); ok2 {
 			assert.Equal(t, lastMockStatus.Status.State, lastReceivedStatus.Status.State, "State of last status event mismatch")
 		} else {
 			t.Errorf("Last mock event was status, but last received was %T", lastReceived)

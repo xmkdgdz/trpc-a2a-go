@@ -19,6 +19,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"trpc.group/trpc-go/a2a-go/protocol"
 	"trpc.group/trpc-go/a2a-go/taskmanager"
 )
 
@@ -41,7 +43,7 @@ func newTestProcessor() *testProcessor {
 func (p *testProcessor) Process(
 	ctx context.Context,
 	taskID string,
-	initialMsg taskmanager.Message,
+	initialMsg protocol.Message,
 	handle taskmanager.TaskHandle,
 ) error {
 	p.mu.Lock()
@@ -52,7 +54,7 @@ func (p *testProcessor) Process(
 	var command string
 	var messageText string
 	if len(initialMsg.Parts) > 0 {
-		if textPart, ok := initialMsg.Parts[0].(taskmanager.TextPart); ok {
+		if textPart, ok := initialMsg.Parts[0].(protocol.TextPart); ok {
 			messageText = textPart.Text
 			// Extract command if format is "command:message"
 			for _, prefix := range []string{"sleep:", "fail:", "cancel:", "artifacts:", "input-required:"} {
@@ -78,9 +80,9 @@ func (p *testProcessor) Process(
 
 	// Simulate a failure if requested
 	if command == "fail" {
-		handle.UpdateStatus(taskmanager.TaskStateWorking, &taskmanager.Message{
-			Role:  taskmanager.MessageRoleAgent,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("Processing started but will fail")},
+		handle.UpdateStatus(protocol.TaskStateWorking, &protocol.Message{
+			Role:  protocol.MessageRoleAgent,
+			Parts: []protocol.Part{protocol.NewTextPart("Processing started but will fail")},
 		})
 		return fmt.Errorf("task failed as requested: %s", messageText)
 	}
@@ -93,9 +95,9 @@ func (p *testProcessor) Process(
 				return ctx.Err()
 			case <-time.After(100 * time.Millisecond):
 				// Update status to show we're still working
-				handle.UpdateStatus(taskmanager.TaskStateWorking, &taskmanager.Message{
-					Role:  taskmanager.MessageRoleAgent,
-					Parts: []taskmanager.Part{taskmanager.NewTextPart(fmt.Sprintf("Still working... %d", i))},
+				handle.UpdateStatus(protocol.TaskStateWorking, &protocol.Message{
+					Role:  protocol.MessageRoleAgent,
+					Parts: []protocol.Part{protocol.NewTextPart(fmt.Sprintf("Still working... %d", i))},
 				})
 			}
 		}
@@ -104,10 +106,10 @@ func (p *testProcessor) Process(
 	// Simulate returning multiple artifacts if requested
 	if command == "artifacts" {
 		for i := 0; i < 3; i++ {
-			artifact := taskmanager.Artifact{
+			artifact := protocol.Artifact{
 				Name: stringPtr(fmt.Sprintf("artifact-%d", i)),
-				Parts: []taskmanager.Part{
-					taskmanager.NewTextPart(fmt.Sprintf("Artifact content %d: %s", i, messageText)),
+				Parts: []protocol.Part{
+					protocol.NewTextPart(fmt.Sprintf("Artifact content %d: %s", i, messageText)),
 				},
 				Index: i,
 			}
@@ -122,16 +124,16 @@ func (p *testProcessor) Process(
 
 	// Simulate requiring input if requested
 	if command == "input-required" {
-		return handle.UpdateStatus(taskmanager.TaskStateInputRequired, &taskmanager.Message{
-			Role:  taskmanager.MessageRoleAgent,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("Please provide more input: " + messageText)},
+		return handle.UpdateStatus(protocol.TaskStateInputRequired, &protocol.Message{
+			Role:  protocol.MessageRoleAgent,
+			Parts: []protocol.Part{protocol.NewTextPart("Please provide more input: " + messageText)},
 		})
 	}
 
 	// Default processing for normal tasks
-	return handle.UpdateStatus(taskmanager.TaskStateCompleted, &taskmanager.Message{
-		Role:  taskmanager.MessageRoleAgent,
-		Parts: []taskmanager.Part{taskmanager.NewTextPart("Task completed successfully: " + messageText)},
+	return handle.UpdateStatus(protocol.TaskStateCompleted, &protocol.Message{
+		Role:  protocol.MessageRoleAgent,
+		Parts: []protocol.Part{protocol.NewTextPart("Task completed successfully: " + messageText)},
 	})
 }
 
@@ -172,18 +174,18 @@ func TestE2E_BasicTaskProcessing(t *testing.T) {
 	defer cancel()
 
 	// Create a task
-	taskParams := taskmanager.SendTaskParams{
+	taskParams := protocol.SendTaskParams{
 		ID: "test-task-1",
-		Message: taskmanager.Message{
-			Role:  taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("Hello, this is a test task")},
+		Message: protocol.Message{
+			Role:  protocol.MessageRoleUser,
+			Parts: []protocol.Part{protocol.NewTextPart("Hello, this is a test task")},
 		},
 	}
 
 	// Submit the task (simulates client -> server -> task manager flow)
 	task, err := manager.OnSendTask(ctx, taskParams)
 	require.NoError(t, err, "Failed to send task")
-	assert.Equal(t, taskmanager.TaskStateCompleted, task.Status.State, "Task should be completed")
+	assert.Equal(t, protocol.TaskStateCompleted, task.Status.State, "Task should be completed")
 
 	// Verify the task was stored in Redis
 	taskKey := "task:" + taskParams.ID
@@ -194,16 +196,16 @@ func TestE2E_BasicTaskProcessing(t *testing.T) {
 	assert.True(t, mr.Exists(messageKey), "Message history should be stored in Redis")
 
 	// Retrieve the task to verify content
-	retrievedTask, err := manager.OnGetTask(ctx, taskmanager.TaskQueryParams{
+	retrievedTask, err := manager.OnGetTask(ctx, protocol.TaskQueryParams{
 		ID:            taskParams.ID,
 		HistoryLength: intPtr(10),
 	})
 	require.NoError(t, err, "Failed to retrieve task")
 
 	// Verify the final state and response message
-	assert.Equal(t, taskmanager.TaskStateCompleted, retrievedTask.Status.State)
+	assert.Equal(t, protocol.TaskStateCompleted, retrievedTask.Status.State)
 	require.NotNil(t, retrievedTask.Status.Message, "Response message should not be nil")
-	assert.Equal(t, taskmanager.MessageRoleAgent, retrievedTask.Status.Message.Role)
+	assert.Equal(t, protocol.MessageRoleAgent, retrievedTask.Status.Message.Role)
 	require.Greater(t, len(retrievedTask.Status.Message.Parts), 0, "Response should have message parts")
 
 	// Verify message history
@@ -220,11 +222,11 @@ func TestE2E_TaskSubscription(t *testing.T) {
 	defer cancel()
 
 	// Create a task with artifact generation
-	taskParams := taskmanager.SendTaskParams{
+	taskParams := protocol.SendTaskParams{
 		ID: "test-subscribe-task",
-		Message: taskmanager.Message{
-			Role:  taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("artifacts:test artifacts")},
+		Message: protocol.Message{
+			Role:  protocol.MessageRoleUser,
+			Parts: []protocol.Part{protocol.NewTextPart("artifacts:test artifacts")},
 		},
 	}
 
@@ -233,9 +235,9 @@ func TestE2E_TaskSubscription(t *testing.T) {
 	require.NoError(t, err, "Failed to subscribe to task")
 
 	// Collect events
-	var statusEvents []taskmanager.TaskStatusUpdateEvent
-	var artifactEvents []taskmanager.TaskArtifactUpdateEvent
-	var lastEvent taskmanager.TaskEvent
+	var statusEvents []protocol.TaskStatusUpdateEvent
+	var artifactEvents []protocol.TaskArtifactUpdateEvent
+	var lastEvent protocol.TaskEvent
 
 	// Process events until the channel is closed or timeout occurs
 	timeout := time.After(3 * time.Second)
@@ -251,9 +253,9 @@ eventLoop:
 
 			// Collect events by type for verification
 			switch e := event.(type) {
-			case taskmanager.TaskStatusUpdateEvent:
+			case protocol.TaskStatusUpdateEvent:
 				statusEvents = append(statusEvents, e)
-			case taskmanager.TaskArtifactUpdateEvent:
+			case protocol.TaskArtifactUpdateEvent:
 				artifactEvents = append(artifactEvents, e)
 			}
 		case <-timeout:
@@ -273,11 +275,11 @@ eventLoop:
 	assert.True(t, lastEvent.IsFinal(), "Last event should be final")
 
 	// Retrieve the task to verify final state
-	retrievedTask, err := manager.OnGetTask(ctx, taskmanager.TaskQueryParams{
+	retrievedTask, err := manager.OnGetTask(ctx, protocol.TaskQueryParams{
 		ID: taskParams.ID,
 	})
 	require.NoError(t, err, "Failed to retrieve task")
-	assert.Equal(t, taskmanager.TaskStateCompleted, retrievedTask.Status.State)
+	assert.Equal(t, protocol.TaskStateCompleted, retrievedTask.Status.State)
 	assert.Equal(t, 3, len(retrievedTask.Artifacts), "Task should have 3 artifacts")
 }
 
@@ -291,11 +293,11 @@ func TestE2E_TaskCancellation(t *testing.T) {
 	defer cancel()
 
 	// Create a long-running task that can be cancelled
-	taskParams := taskmanager.SendTaskParams{
+	taskParams := protocol.SendTaskParams{
 		ID: "test-cancel-task",
-		Message: taskmanager.Message{
-			Role:  taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("cancel:task to be cancelled")},
+		Message: protocol.Message{
+			Role:  protocol.MessageRoleUser,
+			Parts: []protocol.Part{protocol.NewTextPart("cancel:task to be cancelled")},
 		},
 	}
 
@@ -312,8 +314,8 @@ func TestE2E_TaskCancellation(t *testing.T) {
 			if !ok {
 				t.Fatal("Event channel closed before task started")
 			}
-			if statusEvent, ok := event.(taskmanager.TaskStatusUpdateEvent); ok {
-				if statusEvent.Status.State == taskmanager.TaskStateWorking {
+			if statusEvent, ok := event.(protocol.TaskStatusUpdateEvent); ok {
+				if statusEvent.Status.State == protocol.TaskStateWorking {
 					taskStarted = true
 				}
 			}
@@ -323,9 +325,9 @@ func TestE2E_TaskCancellation(t *testing.T) {
 	}
 
 	// Cancel the task once it's started
-	cancelledTask, err := manager.OnCancelTask(ctx, taskmanager.TaskIDParams{ID: taskParams.ID})
+	cancelledTask, err := manager.OnCancelTask(ctx, protocol.TaskIDParams{ID: taskParams.ID})
 	require.NoError(t, err, "Failed to cancel task")
-	assert.Equal(t, taskmanager.TaskStateCanceled, cancelledTask.Status.State, "Task should be in cancelled state")
+	assert.Equal(t, protocol.TaskStateCanceled, cancelledTask.Status.State, "Task should be in cancelled state")
 
 	// Wait for final event or timeout
 	var finalEventReceived bool
@@ -347,9 +349,9 @@ func TestE2E_TaskCancellation(t *testing.T) {
 	}
 
 	// Verify the final state
-	retrievedTask, err := manager.OnGetTask(ctx, taskmanager.TaskQueryParams{ID: taskParams.ID})
+	retrievedTask, err := manager.OnGetTask(ctx, protocol.TaskQueryParams{ID: taskParams.ID})
 	require.NoError(t, err, "Failed to retrieve task")
-	assert.Equal(t, taskmanager.TaskStateCanceled, retrievedTask.Status.State, "Task should remain in cancelled state")
+	assert.Equal(t, protocol.TaskStateCanceled, retrievedTask.Status.State, "Task should remain in cancelled state")
 }
 
 // Test task resubscription
@@ -362,22 +364,22 @@ func TestE2E_TaskResubscribe(t *testing.T) {
 	defer cancel()
 
 	// Create and complete a task first
-	taskParams := taskmanager.SendTaskParams{
+	taskParams := protocol.SendTaskParams{
 		ID: "test-resubscribe-task",
-		Message: taskmanager.Message{
-			Role:  taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("Hello, this is a test task")},
+		Message: protocol.Message{
+			Role:  protocol.MessageRoleUser,
+			Parts: []protocol.Part{protocol.NewTextPart("Hello, this is a test task")},
 		},
 	}
 
 	// Complete the task
 	task, err := manager.OnSendTask(ctx, taskParams)
 	require.NoError(t, err, "Failed to send task")
-	assert.Equal(t, taskmanager.TaskStateCompleted, task.Status.State)
+	assert.Equal(t, protocol.TaskStateCompleted, task.Status.State)
 
 	// Now try to resubscribe to the completed task
 	resubEventChan, err := manager.OnResubscribe(
-		ctx, taskmanager.TaskIDParams{ID: taskParams.ID},
+		ctx, protocol.TaskIDParams{ID: taskParams.ID},
 	)
 	require.NoError(t, err, "Failed to resubscribe to task")
 
@@ -386,9 +388,9 @@ func TestE2E_TaskResubscribe(t *testing.T) {
 	require.True(t, ok, "Should receive one event")
 	assert.True(t, event.IsFinal(), "Event should be final")
 
-	statusEvent, ok := event.(taskmanager.TaskStatusUpdateEvent)
+	statusEvent, ok := event.(protocol.TaskStatusUpdateEvent)
 	require.True(t, ok, "Event should be a status update")
-	assert.Equal(t, taskmanager.TaskStateCompleted, statusEvent.Status.State)
+	assert.Equal(t, protocol.TaskStateCompleted, statusEvent.Status.State)
 
 	// Ensure channel closes
 	_, ok = <-resubEventChan
@@ -405,11 +407,11 @@ func TestE2E_PushNotifications(t *testing.T) {
 	defer cancel()
 
 	// Create a task
-	taskParams := taskmanager.SendTaskParams{
+	taskParams := protocol.SendTaskParams{
 		ID: "test-push-notification",
-		Message: taskmanager.Message{
-			Role:  taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("Task with push notifications")},
+		Message: protocol.Message{
+			Role:  protocol.MessageRoleUser,
+			Parts: []protocol.Part{protocol.NewTextPart("Task with push notifications")},
 		},
 	}
 
@@ -418,9 +420,9 @@ func TestE2E_PushNotifications(t *testing.T) {
 	require.NoError(t, err, "Failed to send task")
 
 	// Configure push notifications for the task
-	pushConfig := taskmanager.TaskPushNotificationConfig{
+	pushConfig := protocol.TaskPushNotificationConfig{
 		ID: taskParams.ID,
-		PushNotificationConfig: taskmanager.PushNotificationConfig{
+		PushNotificationConfig: protocol.PushNotificationConfig{
 			URL:   "https://example.com/webhook",
 			Token: "test-token",
 		},
@@ -438,7 +440,7 @@ func TestE2E_PushNotifications(t *testing.T) {
 
 	// Get push notification config
 	retrievedConfig, err := manager.OnPushNotificationGet(
-		ctx, taskmanager.TaskIDParams{ID: taskParams.ID},
+		ctx, protocol.TaskIDParams{ID: taskParams.ID},
 	)
 	require.NoError(t, err, "Failed to get push notification config")
 	assert.Equal(t, pushConfig.PushNotificationConfig.URL, retrievedConfig.PushNotificationConfig.URL)
@@ -457,28 +459,28 @@ func TestE2E_ErrorHandling(t *testing.T) {
 	nonExistentTaskID := "non-existent-task"
 
 	// Try to get a non-existent task
-	_, err := manager.OnGetTask(ctx, taskmanager.TaskQueryParams{ID: nonExistentTaskID})
+	_, err := manager.OnGetTask(ctx, protocol.TaskQueryParams{ID: nonExistentTaskID})
 	assert.Error(t, err, "Getting non-existent task should return an error")
 
 	// Try to cancel a non-existent task
-	_, err = manager.OnCancelTask(ctx, taskmanager.TaskIDParams{ID: nonExistentTaskID})
+	_, err = manager.OnCancelTask(ctx, protocol.TaskIDParams{ID: nonExistentTaskID})
 	assert.Error(t, err, "Cancelling non-existent task should return an error")
 
 	// Try to get push notifications for a non-existent task
-	_, err = manager.OnPushNotificationGet(ctx, taskmanager.TaskIDParams{ID: nonExistentTaskID})
+	_, err = manager.OnPushNotificationGet(ctx, protocol.TaskIDParams{ID: nonExistentTaskID})
 	assert.Error(t, err, "Getting push notifications for non-existent task should return an error")
 
 	// Try to set push notifications for a non-existent task
-	_, err = manager.OnPushNotificationSet(ctx, taskmanager.TaskPushNotificationConfig{
+	_, err = manager.OnPushNotificationSet(ctx, protocol.TaskPushNotificationConfig{
 		ID: nonExistentTaskID,
-		PushNotificationConfig: taskmanager.PushNotificationConfig{
+		PushNotificationConfig: protocol.PushNotificationConfig{
 			URL: "https://example.com/webhook",
 		},
 	})
 	assert.Error(t, err, "Setting push notifications for non-existent task should return an error")
 
 	// Try to resubscribe to a non-existent task
-	_, err = manager.OnResubscribe(ctx, taskmanager.TaskIDParams{ID: nonExistentTaskID})
+	_, err = manager.OnResubscribe(ctx, protocol.TaskIDParams{ID: nonExistentTaskID})
 	assert.Error(t, err, "Resubscribing to non-existent task should return an error")
 }
 
@@ -492,11 +494,11 @@ func TestE2E_TaskFailure(t *testing.T) {
 	defer cancel()
 
 	// Create a task that will fail
-	taskParams := taskmanager.SendTaskParams{
+	taskParams := protocol.SendTaskParams{
 		ID: "test-failure-task",
-		Message: taskmanager.Message{
-			Role:  taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("fail:intentional failure")},
+		Message: protocol.Message{
+			Role:  protocol.MessageRoleUser,
+			Parts: []protocol.Part{protocol.NewTextPart("fail:intentional failure")},
 		},
 	}
 
@@ -504,14 +506,14 @@ func TestE2E_TaskFailure(t *testing.T) {
 	task, err := manager.OnSendTask(ctx, taskParams)
 	// The task should succeed but the processor should report failure status
 	require.NoError(t, err, "OnSendTask should not return an error even if task processing fails")
-	assert.Equal(t, taskmanager.TaskStateFailed, task.Status.State, "Task should be in failed state")
+	assert.Equal(t, protocol.TaskStateFailed, task.Status.State, "Task should be in failed state")
 
 	// Verify the failure was stored
 	retrievedTask, err := manager.OnGetTask(
-		ctx, taskmanager.TaskQueryParams{ID: taskParams.ID},
+		ctx, protocol.TaskQueryParams{ID: taskParams.ID},
 	)
 	require.NoError(t, err, "Failed to retrieve task")
-	assert.Equal(t, taskmanager.TaskStateFailed, retrievedTask.Status.State)
+	assert.Equal(t, protocol.TaskStateFailed, retrievedTask.Status.State)
 	require.NotNil(t, retrievedTask.Status.Message, "Failure message should be available")
 }
 
@@ -525,25 +527,25 @@ func TestE2E_InputRequired(t *testing.T) {
 	defer cancel()
 
 	// Create a task that will require input
-	taskParams := taskmanager.SendTaskParams{
+	taskParams := protocol.SendTaskParams{
 		ID: "test-input-required",
-		Message: taskmanager.Message{
-			Role:  taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("input-required:more data needed")},
+		Message: protocol.Message{
+			Role:  protocol.MessageRoleUser,
+			Parts: []protocol.Part{protocol.NewTextPart("input-required:more data needed")},
 		},
 	}
 
 	// Send the task
 	task, err := manager.OnSendTask(ctx, taskParams)
 	require.NoError(t, err, "Failed to send task")
-	assert.Equal(t, taskmanager.TaskStateInputRequired, task.Status.State, "Task should be in input-required state")
+	assert.Equal(t, protocol.TaskStateInputRequired, task.Status.State, "Task should be in input-required state")
 
 	// Verify the state was stored
 	retrievedTask, err := manager.OnGetTask(
-		ctx, taskmanager.TaskQueryParams{ID: taskParams.ID},
+		ctx, protocol.TaskQueryParams{ID: taskParams.ID},
 	)
 	require.NoError(t, err, "Failed to retrieve task")
-	assert.Equal(t, taskmanager.TaskStateInputRequired, retrievedTask.Status.State)
+	assert.Equal(t, protocol.TaskStateInputRequired, retrievedTask.Status.State)
 	require.NotNil(t, retrievedTask.Status.Message, "Input request message should be available")
 }
 

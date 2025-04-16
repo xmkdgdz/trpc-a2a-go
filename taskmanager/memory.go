@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"trpc.group/trpc-go/a2a-go/log"
+	"trpc.group/trpc-go/a2a-go/protocol"
 )
 
 // MemoryTaskManager provides a concrete, memory-based implementation of the
@@ -29,15 +30,15 @@ type MemoryTaskManager struct {
 	// Processor is the agent logic processor.
 	Processor TaskProcessor
 	// Tasks is a map of task IDs to tasks.
-	Tasks map[string]*Task
+	Tasks map[string]*protocol.Task
 	// TasksMutex is a mutex for the Tasks map.
 	TasksMutex sync.RWMutex
 	// Messages is a map of task IDs to message history.
-	Messages map[string][]Message
+	Messages map[string][]protocol.Message
 	// MessagesMutex is a mutex for the Messages map.
 	MessagesMutex sync.RWMutex
 	// Subscribers is a map of task IDs to subscriber channels.
-	Subscribers map[string][]chan<- TaskEvent
+	Subscribers map[string][]chan<- protocol.TaskEvent
 	// SubMutex is a mutex for the Subscribers map.
 	SubMutex sync.RWMutex
 	// Contexts is a map of task IDs to cancellation functions.
@@ -45,7 +46,7 @@ type MemoryTaskManager struct {
 	// ContextsMutex is a mutex for the Contexts map.
 	ContextsMutex sync.RWMutex
 	// PushNotifications is a map of task IDs to push notification configurations.
-	PushNotifications map[string]PushNotificationConfig
+	PushNotifications map[string]protocol.PushNotificationConfig
 	// PushNotificationsMutex is a mutex for the PushNotifications map.
 	PushNotificationsMutex sync.RWMutex
 }
@@ -57,11 +58,11 @@ func NewMemoryTaskManager(processor TaskProcessor) (*MemoryTaskManager, error) {
 	}
 	return &MemoryTaskManager{
 		Processor:         processor,
-		Tasks:             make(map[string]*Task),
-		Messages:          make(map[string][]Message),
-		Subscribers:       make(map[string][]chan<- TaskEvent),
+		Tasks:             make(map[string]*protocol.Task),
+		Messages:          make(map[string][]protocol.Message),
+		Subscribers:       make(map[string][]chan<- protocol.TaskEvent),
 		Contexts:          make(map[string]context.CancelFunc),
-		PushNotifications: make(map[string]PushNotificationConfig),
+		PushNotifications: make(map[string]protocol.PushNotificationConfig),
 	}, nil
 }
 
@@ -70,7 +71,7 @@ func NewMemoryTaskManager(processor TaskProcessor) (*MemoryTaskManager, error) {
 func (m *MemoryTaskManager) processTaskWithProcessor(
 	ctx context.Context,
 	taskID string,
-	message Message,
+	message protocol.Message,
 ) error {
 	handle := &memoryTaskHandle{
 		taskID:  taskID,
@@ -78,7 +79,7 @@ func (m *MemoryTaskManager) processTaskWithProcessor(
 	}
 
 	// Set initial status to Working before calling Process
-	if err := m.UpdateTaskStatus(taskID, TaskStateWorking, nil); err != nil {
+	if err := m.UpdateTaskStatus(taskID, protocol.TaskStateWorking, nil); err != nil {
 		log.Errorf("Error setting initial Working status for task %s: %v", taskID, err)
 		return fmt.Errorf("failed to set initial working status: %w", err)
 	}
@@ -86,9 +87,9 @@ func (m *MemoryTaskManager) processTaskWithProcessor(
 	// Delegate the actual processing to the injected processor
 	if err := m.Processor.Process(ctx, taskID, message, handle); err != nil {
 		log.Errorf("Processor failed for task %s: %v", taskID, err)
-		errMsg := &Message{Role: MessageRoleAgent, Parts: []Part{NewTextPart(err.Error())}}
+		errMsg := &protocol.Message{Role: protocol.MessageRoleAgent, Parts: []protocol.Part{protocol.NewTextPart(err.Error())}}
 		// Log update error while still handling the processor error
-		if updateErr := m.UpdateTaskStatus(taskID, TaskStateFailed, errMsg); updateErr != nil {
+		if updateErr := m.UpdateTaskStatus(taskID, protocol.TaskStateFailed, errMsg); updateErr != nil {
 			log.Errorf("Failed to update task %s status to failed: %v", taskID, updateErr)
 		}
 		return err
@@ -102,7 +103,7 @@ func (m *MemoryTaskManager) processTaskWithProcessor(
 func (m *MemoryTaskManager) startTaskSubscribe(
 	ctx context.Context,
 	taskID string,
-	message Message,
+	message protocol.Message,
 ) {
 	// Create a handle for the processor to interact with the task
 	handle := &memoryTaskHandle{
@@ -119,8 +120,8 @@ func (m *MemoryTaskManager) startTaskSubscribe(
 			log.Errorf("Processor failed for task %s in subscribe: %v", taskID, err)
 			if ctx.Err() != context.Canceled {
 				// Only update to failed if not already cancelled
-				errMsg := &Message{Role: MessageRoleAgent, Parts: []Part{NewTextPart(err.Error())}}
-				if updateErr := m.UpdateTaskStatus(taskID, TaskStateFailed, errMsg); updateErr != nil {
+				errMsg := &protocol.Message{Role: protocol.MessageRoleAgent, Parts: []protocol.Part{protocol.NewTextPart(err.Error())}}
+				if updateErr := m.UpdateTaskStatus(taskID, protocol.TaskStateFailed, errMsg); updateErr != nil {
 					log.Errorf("Failed to update task %s status to failed: %v", taskID, updateErr)
 				}
 			}
@@ -137,7 +138,7 @@ func (m *MemoryTaskManager) startTaskSubscribe(
 
 // OnSendTask handles the creation or retrieval of a task and initiates synchronous processing.
 // It implements the TaskManager interface.
-func (m *MemoryTaskManager) OnSendTask(ctx context.Context, params SendTaskParams) (*Task, error) {
+func (m *MemoryTaskManager) OnSendTask(ctx context.Context, params protocol.SendTaskParams) (*protocol.Task, error) {
 	_ = m.upsertTask(params)                  // Get or create task entry. Ignore return.
 	m.storeMessage(params.ID, params.Message) // Store the initial user message.
 
@@ -163,15 +164,15 @@ func (m *MemoryTaskManager) OnSendTask(ctx context.Context, params SendTaskParam
 // The channel will receive events until the task completes, fails, is cancelled, or the context expires.
 func (m *MemoryTaskManager) OnSendTaskSubscribe(
 	ctx context.Context,
-	params SendTaskParams,
-) (<-chan TaskEvent, error) {
+	params protocol.SendTaskParams,
+) (<-chan protocol.TaskEvent, error) {
 	// Create a new task or update an existing one
 	task := m.upsertTask(params)
 	// Store the message that came with the request
 	m.storeMessage(params.ID, params.Message)
 
 	// Create event channel for this specific subscriber
-	eventChan := make(chan TaskEvent, 10) // Buffered to prevent blocking sends
+	eventChan := make(chan protocol.TaskEvent, 10) // Buffered to prevent blocking sends
 	m.addSubscriber(params.ID, eventChan)
 
 	// Create a cancellable context for the processor
@@ -184,8 +185,8 @@ func (m *MemoryTaskManager) OnSendTaskSubscribe(
 
 	// Set initial state if new (submitted -> working)
 	// This will generate the first event for subscribers
-	if task.Status.State == TaskStateSubmitted {
-		if err := m.UpdateTaskStatus(params.ID, TaskStateWorking, nil); err != nil {
+	if task.Status.State == protocol.TaskStateSubmitted {
+		if err := m.UpdateTaskStatus(params.ID, protocol.TaskStateWorking, nil); err != nil {
 			m.removeSubscriber(params.ID, eventChan)
 			close(eventChan)
 			return nil, err
@@ -201,13 +202,13 @@ func (m *MemoryTaskManager) OnSendTaskSubscribe(
 
 // getTaskInternal retrieves the task without locking (caller must handle locks).
 // Returns nil if not found.
-func (m *MemoryTaskManager) getTaskInternal(taskID string) (*Task, error) {
+func (m *MemoryTaskManager) getTaskInternal(taskID string) (*protocol.Task, error) {
 	return m.getTaskWithValidation(taskID)
 }
 
 // OnGetTask retrieves the current state of a task, including optional message history.
 // It implements the TaskManager interface.
-func (m *MemoryTaskManager) OnGetTask(ctx context.Context, params TaskQueryParams) (*Task, error) {
+func (m *MemoryTaskManager) OnGetTask(ctx context.Context, params protocol.TaskQueryParams) (*protocol.Task, error) {
 	task, err := m.getTaskWithValidation(params.ID)
 	if err != nil {
 		return nil, err // Already an ErrTaskNotFound or similar.
@@ -228,7 +229,7 @@ func (m *MemoryTaskManager) OnGetTask(ctx context.Context, params TaskQueryParam
 				startIndex = historyLen - requestedLen
 			}
 			// Make a copy of the history slice.
-			task.History = make([]Message, len(messages[startIndex:]))
+			task.History = make([]protocol.Message, len(messages[startIndex:]))
 			copy(task.History, messages[startIndex:])
 			// --> Add logging here to check type immediately after copy.
 			if len(task.History) > 0 && len(task.History[0].Parts) > 0 {
@@ -243,7 +244,7 @@ func (m *MemoryTaskManager) OnGetTask(ctx context.Context, params TaskQueryParam
 
 // OnCancelTask attempts to cancel an ongoing task.
 // It implements the TaskManager interface.
-func (m *MemoryTaskManager) OnCancelTask(ctx context.Context, params TaskIDParams) (*Task, error) {
+func (m *MemoryTaskManager) OnCancelTask(ctx context.Context, params protocol.TaskIDParams) (*protocol.Task, error) {
 	m.TasksMutex.Lock()
 	task, exists := m.Tasks[params.ID]
 	if !exists {
@@ -272,14 +273,14 @@ func (m *MemoryTaskManager) OnCancelTask(ctx context.Context, params TaskIDParam
 		log.Warnf("Warning: No cancellation function found for task %s", params.ID)
 	}
 	// Create a cancellation message.
-	cancelMsg := &Message{
-		Role: MessageRoleAgent,
-		Parts: []Part{
-			NewTextPart(fmt.Sprintf("Task %s was canceled by user request", params.ID)),
+	cancelMsg := &protocol.Message{
+		Role: protocol.MessageRoleAgent,
+		Parts: []protocol.Part{
+			protocol.NewTextPart(fmt.Sprintf("Task %s was canceled by user request", params.ID)),
 		},
 	}
 	// Update state to Cancelled.
-	if err := m.UpdateTaskStatus(params.ID, TaskStateCanceled, cancelMsg); err != nil {
+	if err := m.UpdateTaskStatus(params.ID, protocol.TaskStateCanceled, cancelMsg); err != nil {
 		log.Errorf("Error updating status to Cancelled for task %s: %v", params.ID, err)
 		return nil, err
 	}
@@ -294,7 +295,7 @@ func (m *MemoryTaskManager) OnCancelTask(ctx context.Context, params TaskIDParam
 // UpdateTaskStatus updates the task's state and notifies any subscribers.
 // Returns an error if the task does not exist.
 // Exported method (used by memoryTaskHandle).
-func (m *MemoryTaskManager) UpdateTaskStatus(taskID string, state TaskState, message *Message) error {
+func (m *MemoryTaskManager) UpdateTaskStatus(taskID string, state protocol.TaskState, message *protocol.Message) error {
 	m.TasksMutex.Lock()
 	task, exists := m.Tasks[taskID]
 	if !exists {
@@ -303,7 +304,7 @@ func (m *MemoryTaskManager) UpdateTaskStatus(taskID string, state TaskState, mes
 		return ErrTaskNotFound(taskID)
 	}
 	// Update status fields.
-	task.Status = TaskStatus{
+	task.Status = protocol.TaskStatus{
 		State:     state,
 		Message:   message,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -317,7 +318,7 @@ func (m *MemoryTaskManager) UpdateTaskStatus(taskID string, state TaskState, mes
 		m.storeMessage(taskID, *message)
 	}
 	// Notify subscribers outside the lock.
-	m.notifySubscribers(taskID, TaskStatusUpdateEvent{
+	m.notifySubscribers(taskID, protocol.TaskStatusUpdateEvent{
 		ID:     taskID,
 		Status: taskCopy.Status,
 		Final:  isFinalState(state),
@@ -328,7 +329,7 @@ func (m *MemoryTaskManager) UpdateTaskStatus(taskID string, state TaskState, mes
 // AddArtifact adds an artifact to the task and notifies subscribers.
 // Returns an error if the task does not exist.
 // Exported method (used by memoryTaskHandle).
-func (m *MemoryTaskManager) AddArtifact(taskID string, artifact Artifact) error {
+func (m *MemoryTaskManager) AddArtifact(taskID string, artifact protocol.Artifact) error {
 	m.TasksMutex.Lock()
 	task, exists := m.Tasks[taskID]
 	if !exists {
@@ -338,14 +339,14 @@ func (m *MemoryTaskManager) AddArtifact(taskID string, artifact Artifact) error 
 	}
 	// Append the artifact.
 	if task.Artifacts == nil {
-		task.Artifacts = make([]Artifact, 0, 1)
+		task.Artifacts = make([]protocol.Artifact, 0, 1)
 	}
 	task.Artifacts = append(task.Artifacts, artifact)
 	// Create copies for notification before unlocking.
 	m.TasksMutex.Unlock() // Unlock before potentially blocking on channel send.
 	// Notify subscribers outside the lock.
 	finalEvent := artifact.LastChunk != nil && *artifact.LastChunk
-	m.notifySubscribers(taskID, TaskArtifactUpdateEvent{
+	m.notifySubscribers(taskID, protocol.TaskArtifactUpdateEvent{
 		ID:       taskID,
 		Artifact: artifact,
 		Final:    finalEvent,
@@ -357,12 +358,12 @@ func (m *MemoryTaskManager) AddArtifact(taskID string, artifact Artifact) error 
 
 // upsertTask creates a new task or updates metadata if it already exists.
 // Assumes locks are handled by the caller if needed, but acquires its own lock.
-func (m *MemoryTaskManager) upsertTask(params SendTaskParams) *Task {
+func (m *MemoryTaskManager) upsertTask(params protocol.SendTaskParams) *protocol.Task {
 	m.TasksMutex.Lock()
 	defer m.TasksMutex.Unlock()
 	task, exists := m.Tasks[params.ID]
 	if !exists {
-		task = NewTask(params.ID, params.SessionID)
+		task = protocol.NewTask(params.ID, params.SessionID)
 		m.Tasks[params.ID] = task
 		log.Infof("Created new task %s (Session: %v)", params.ID, params.SessionID)
 	} else {
@@ -382,38 +383,38 @@ func (m *MemoryTaskManager) upsertTask(params SendTaskParams) *Task {
 
 // storeMessage adds a message to the task's history.
 // Assumes locks are handled by the caller if needed, but acquires its own lock.
-func (m *MemoryTaskManager) storeMessage(taskID string, message Message) {
+func (m *MemoryTaskManager) storeMessage(taskID string, message protocol.Message) {
 	m.MessagesMutex.Lock()
 	defer m.MessagesMutex.Unlock()
 	if _, exists := m.Messages[taskID]; !exists {
-		m.Messages[taskID] = make([]Message, 0, 1) // Initialize with capacity.
+		m.Messages[taskID] = make([]protocol.Message, 0, 1) // Initialize with capacity.
 	}
 	// Create a copy of the message to store, ensuring history isolation.
-	messageCopy := Message{
+	messageCopy := protocol.Message{
 		Role:     message.Role,
 		Metadata: message.Metadata, // Shallow copy of map is usually fine.
 	}
 	if message.Parts != nil {
 		// Copy the slice of parts (shallow copy of interface values is correct).
-		messageCopy.Parts = make([]Part, len(message.Parts))
+		messageCopy.Parts = make([]protocol.Part, len(message.Parts))
 		copy(messageCopy.Parts, message.Parts)
 	}
 	m.Messages[taskID] = append(m.Messages[taskID], messageCopy)
 }
 
 // addSubscriber adds a channel to the list of subscribers for a task.
-func (m *MemoryTaskManager) addSubscriber(taskID string, ch chan<- TaskEvent) {
+func (m *MemoryTaskManager) addSubscriber(taskID string, ch chan<- protocol.TaskEvent) {
 	m.SubMutex.Lock()
 	defer m.SubMutex.Unlock()
 	if _, exists := m.Subscribers[taskID]; !exists {
-		m.Subscribers[taskID] = make([]chan<- TaskEvent, 0, 1)
+		m.Subscribers[taskID] = make([]chan<- protocol.TaskEvent, 0, 1)
 	}
 	m.Subscribers[taskID] = append(m.Subscribers[taskID], ch)
 	log.Debugf("Added subscriber for task %s", taskID)
 }
 
 // removeSubscriber removes a specific channel from the list of subscribers for a task.
-func (m *MemoryTaskManager) removeSubscriber(taskID string, ch chan<- TaskEvent) {
+func (m *MemoryTaskManager) removeSubscriber(taskID string, ch chan<- protocol.TaskEvent) {
 	m.SubMutex.Lock()
 	defer m.SubMutex.Unlock()
 	channels, exists := m.Subscribers[taskID]
@@ -421,7 +422,7 @@ func (m *MemoryTaskManager) removeSubscriber(taskID string, ch chan<- TaskEvent)
 		return // No subscribers for this task.
 	}
 	// Filter out the channel to remove.
-	var newChannels []chan<- TaskEvent
+	var newChannels []chan<- protocol.TaskEvent
 	for _, existingCh := range channels {
 		if existingCh != ch {
 			newChannels = append(newChannels, existingCh)
@@ -436,7 +437,7 @@ func (m *MemoryTaskManager) removeSubscriber(taskID string, ch chan<- TaskEvent)
 }
 
 // notifySubscribers sends an event to all current subscribers of a task.
-func (m *MemoryTaskManager) notifySubscribers(taskID string, event TaskEvent) {
+func (m *MemoryTaskManager) notifySubscribers(taskID string, event protocol.TaskEvent) {
 	m.SubMutex.RLock()
 	subs, exists := m.Subscribers[taskID]
 	if !exists || len(subs) == 0 {
@@ -444,7 +445,7 @@ func (m *MemoryTaskManager) notifySubscribers(taskID string, event TaskEvent) {
 		return // No subscribers to notify.
 	}
 	// Copy the slice of channels under read lock.
-	subsCopy := make([]chan<- TaskEvent, len(subs))
+	subsCopy := make([]chan<- protocol.TaskEvent, len(subs))
 	copy(subsCopy, subs)
 	m.SubMutex.RUnlock()
 	log.Debugf("Notifying %d subscribers for task %s (Event Type: %T, Final: %t)",
@@ -467,8 +468,8 @@ func (m *MemoryTaskManager) notifySubscribers(taskID string, event TaskEvent) {
 // It sets push notification configuration for a task.
 func (m *MemoryTaskManager) OnPushNotificationSet(
 	ctx context.Context,
-	params TaskPushNotificationConfig,
-) (*TaskPushNotificationConfig, error) {
+	params protocol.TaskPushNotificationConfig,
+) (*protocol.TaskPushNotificationConfig, error) {
 	m.TasksMutex.RLock()
 	_, exists := m.Tasks[params.ID]
 	m.TasksMutex.RUnlock()
@@ -487,8 +488,8 @@ func (m *MemoryTaskManager) OnPushNotificationSet(
 // OnPushNotificationGet implements TaskManager.OnPushNotificationGet.
 // It retrieves the push notification configuration for a task.
 func (m *MemoryTaskManager) OnPushNotificationGet(
-	ctx context.Context, params TaskIDParams,
-) (*TaskPushNotificationConfig, error) {
+	ctx context.Context, params protocol.TaskIDParams,
+) (*protocol.TaskPushNotificationConfig, error) {
 	m.TasksMutex.RLock()
 	_, exists := m.Tasks[params.ID]
 	m.TasksMutex.RUnlock()
@@ -503,7 +504,7 @@ func (m *MemoryTaskManager) OnPushNotificationGet(
 		// Task exists but has no push notification config.
 		return nil, ErrPushNotificationNotConfigured(params.ID)
 	}
-	result := &TaskPushNotificationConfig{
+	result := &protocol.TaskPushNotificationConfig{
 		ID:                     params.ID,
 		PushNotificationConfig: config,
 	}
@@ -512,7 +513,7 @@ func (m *MemoryTaskManager) OnPushNotificationGet(
 
 // OnResubscribe implements TaskManager.OnResubscribe.
 // It allows a client to reestablish an SSE stream for an existing task.
-func (m *MemoryTaskManager) OnResubscribe(ctx context.Context, params TaskIDParams) (<-chan TaskEvent, error) {
+func (m *MemoryTaskManager) OnResubscribe(ctx context.Context, params protocol.TaskIDParams) (<-chan protocol.TaskEvent, error) {
 	m.TasksMutex.RLock()
 	task, exists := m.Tasks[params.ID]
 	m.TasksMutex.RUnlock()
@@ -520,12 +521,12 @@ func (m *MemoryTaskManager) OnResubscribe(ctx context.Context, params TaskIDPara
 		return nil, ErrTaskNotFound(params.ID)
 	}
 	// Create a channel for events.
-	eventChan := make(chan TaskEvent)
+	eventChan := make(chan protocol.TaskEvent)
 	// For tasks in final state, just send a status update event and close.
 	if isFinalState(task.Status.State) {
 		go func() {
 			// Send a task status update event.
-			event := TaskStatusUpdateEvent{
+			event := protocol.TaskStatusUpdateEvent{
 				ID:     task.ID,
 				Status: task.Status,
 				Final:  true,
@@ -553,7 +554,7 @@ func (m *MemoryTaskManager) OnResubscribe(ctx context.Context, params TaskIDPara
 	}()
 	// Send the current status as the first event.
 	go func() {
-		event := TaskStatusUpdateEvent{
+		event := protocol.TaskStatusUpdateEvent{
 			ID:     task.ID,
 			Status: task.Status,
 			Final:  isFinalState(task.Status.State),
@@ -588,7 +589,7 @@ func processError(err error) error {
 
 // getTaskWithValidation gets a task and validates it exists.
 // Returns task and nil if found, nil and error if not found.
-func (m *MemoryTaskManager) getTaskWithValidation(taskID string) (*Task, error) {
+func (m *MemoryTaskManager) getTaskWithValidation(taskID string) (*protocol.Task, error) {
 	m.TasksMutex.RLock()
 	task, exists := m.Tasks[taskID]
 	m.TasksMutex.RUnlock()

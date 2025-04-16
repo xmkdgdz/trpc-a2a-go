@@ -19,8 +19,10 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
 	"trpc.group/trpc-go/a2a-go/auth"
 	"trpc.group/trpc-go/a2a-go/log"
+	"trpc.group/trpc-go/a2a-go/protocol"
 	"trpc.group/trpc-go/a2a-go/taskmanager"
 )
 
@@ -50,7 +52,7 @@ type TaskManager struct {
 	// subMu is a mutex for the Subscribers map.
 	subMu sync.RWMutex
 	// subscribers is a map of task IDs to subscriber channels.
-	subscribers map[string][]chan<- taskmanager.TaskEvent
+	subscribers map[string][]chan<- protocol.TaskEvent
 
 	// cancelMu is a mutex for the cancels map.
 	cancelMu sync.RWMutex
@@ -81,7 +83,7 @@ func NewRedisTaskManager(
 		processor:   processor,
 		client:      client,
 		expiration:  expiration,
-		subscribers: make(map[string][]chan<- taskmanager.TaskEvent),
+		subscribers: make(map[string][]chan<- protocol.TaskEvent),
 		cancels:     make(map[string]context.CancelFunc),
 	}
 	for _, opt := range opts {
@@ -97,17 +99,17 @@ type redisTaskHandle struct {
 }
 
 // UpdateStatus implements TaskHandle.
-func (h *redisTaskHandle) UpdateStatus(state taskmanager.TaskState, msg *taskmanager.Message) error {
+func (h *redisTaskHandle) UpdateStatus(state protocol.TaskState, msg *protocol.Message) error {
 	return h.manager.UpdateTaskStatus(h.taskID, state, msg)
 }
 
 // AddArtifact implements TaskHandle
-func (h *redisTaskHandle) AddArtifact(artifact taskmanager.Artifact) error {
+func (h *redisTaskHandle) AddArtifact(artifact protocol.Artifact) error {
 	return h.manager.AddArtifact(h.taskID, artifact)
 }
 
 // OnSendTask handles the creation or retrieval of a task and initiates synchronous processing.
-func (m *TaskManager) OnSendTask(ctx context.Context, params taskmanager.SendTaskParams) (*taskmanager.Task, error) {
+func (m *TaskManager) OnSendTask(ctx context.Context, params protocol.SendTaskParams) (*protocol.Task, error) {
 	// Create or update task
 	_ = m.upsertTask(ctx, params)
 	// Store the initial message
@@ -120,7 +122,7 @@ func (m *TaskManager) OnSendTask(ctx context.Context, params taskmanager.SendTas
 		manager: m,
 	}
 	// Set initial status to Working *before* calling Process.
-	if err := m.UpdateTaskStatus(params.ID, taskmanager.TaskStateWorking, nil); err != nil {
+	if err := m.UpdateTaskStatus(params.ID, protocol.TaskStateWorking, nil); err != nil {
 		log.Errorf("Error setting initial Working status for task %s: %v", params.ID, err)
 		// Return the task state as it exists, but also the error.
 		latestTask, _ := m.getTaskInternal(ctx, params.ID) // Ignore get error for now.
@@ -130,12 +132,12 @@ func (m *TaskManager) OnSendTask(ctx context.Context, params taskmanager.SendTas
 	var processorErr error
 	if processorErr = m.processor.Process(taskCtx, params.ID, params.Message, handle); processorErr != nil {
 		log.Errorf("Processor failed for task %s: %v", params.ID, processorErr)
-		errMsg := &taskmanager.Message{
-			Role:  taskmanager.MessageRoleAgent,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart(processorErr.Error())},
+		errMsg := &protocol.Message{
+			Role:  protocol.MessageRoleAgent,
+			Parts: []protocol.Part{protocol.NewTextPart(processorErr.Error())},
 		}
 		// Log update error while still handling the processor error.
-		if updateErr := m.UpdateTaskStatus(params.ID, taskmanager.TaskStateFailed, errMsg); updateErr != nil {
+		if updateErr := m.UpdateTaskStatus(params.ID, protocol.TaskStateFailed, errMsg); updateErr != nil {
 			log.Errorf("Failed to update task %s status to failed: %v", params.ID, updateErr)
 		}
 	}
@@ -152,14 +154,14 @@ func (m *TaskManager) OnSendTask(ctx context.Context, params taskmanager.SendTas
 // OnSendTaskSubscribe creates a new task and returns a channel for receiving TaskEvent updates.
 func (m *TaskManager) OnSendTaskSubscribe(
 	ctx context.Context,
-	params taskmanager.SendTaskParams,
-) (<-chan taskmanager.TaskEvent, error) {
+	params protocol.SendTaskParams,
+) (<-chan protocol.TaskEvent, error) {
 	// Create a new task or update an existing one.
 	task := m.upsertTask(ctx, params)
 	// Store the message that came with the request.
 	m.storeMessage(ctx, params.ID, params.Message)
 	// Create event channel for this specific subscriber.
-	eventChan := make(chan taskmanager.TaskEvent, 10) // Buffered to prevent blocking sends.
+	eventChan := make(chan protocol.TaskEvent, 10) // Buffered to prevent blocking sends.
 	m.addSubscriber(params.ID, eventChan)
 	// Create a cancellable context for the processor.
 	processorCtx, cancel := context.WithCancel(ctx)
@@ -169,8 +171,8 @@ func (m *TaskManager) OnSendTaskSubscribe(
 	m.cancelMu.Unlock()
 	// Set initial state if new (submitted -> working).
 	// This will generate the first event for subscribers.
-	if task.Status.State == taskmanager.TaskStateSubmitted {
-		if err := m.UpdateTaskStatus(params.ID, taskmanager.TaskStateWorking, nil); err != nil {
+	if task.Status.State == protocol.TaskStateSubmitted {
+		if err := m.UpdateTaskStatus(params.ID, protocol.TaskStateWorking, nil); err != nil {
 			m.removeSubscriber(params.ID, eventChan)
 			close(eventChan)
 			return nil, err
@@ -189,13 +191,13 @@ func (m *TaskManager) OnSendTaskSubscribe(
 			log.Errorf("Processor failed for task %s in subscribe: %v", params.ID, err)
 			if processorCtx.Err() != context.Canceled {
 				// Only update to failed if not already cancelled.
-				errMsg := &taskmanager.Message{
-					Role:  taskmanager.MessageRoleAgent,
-					Parts: []taskmanager.Part{taskmanager.NewTextPart(err.Error())},
+				errMsg := &protocol.Message{
+					Role:  protocol.MessageRoleAgent,
+					Parts: []protocol.Part{protocol.NewTextPart(err.Error())},
 				}
 				if updateErr := m.UpdateTaskStatus(
 					params.ID,
-					taskmanager.TaskStateFailed,
+					protocol.TaskStateFailed,
 					errMsg,
 				); updateErr != nil {
 					log.Errorf("Failed to update task %s status to failed: %v", params.ID, updateErr)
@@ -219,8 +221,8 @@ func (m *TaskManager) OnSendTaskSubscribe(
 // OnGetTask retrieves the current state of a task.
 func (m *TaskManager) OnGetTask(
 	ctx context.Context,
-	params taskmanager.TaskQueryParams,
-) (*taskmanager.Task, error) {
+	params protocol.TaskQueryParams,
+) (*protocol.Task, error) {
 	task, err := m.getTaskInternal(ctx, params.ID)
 	if err != nil {
 		return nil, err
@@ -241,8 +243,8 @@ func (m *TaskManager) OnGetTask(
 // OnCancelTask requests the cancellation of an ongoing task.
 func (m *TaskManager) OnCancelTask(
 	ctx context.Context,
-	params taskmanager.TaskIDParams,
-) (*taskmanager.Task, error) {
+	params protocol.TaskIDParams,
+) (*protocol.Task, error) {
 	task, err := m.getTaskInternal(ctx, params.ID)
 	if err != nil {
 		return nil, err
@@ -265,14 +267,14 @@ func (m *TaskManager) OnCancelTask(
 		log.Warnf("Warning: No cancellation function found for task %s", params.ID)
 	}
 	// Create a cancellation message.
-	cancelMsg := &taskmanager.Message{
-		Role: taskmanager.MessageRoleAgent,
-		Parts: []taskmanager.Part{
-			taskmanager.NewTextPart(fmt.Sprintf("Task %s was canceled by user request", params.ID)),
+	cancelMsg := &protocol.Message{
+		Role: protocol.MessageRoleAgent,
+		Parts: []protocol.Part{
+			protocol.NewTextPart(fmt.Sprintf("Task %s was canceled by user request", params.ID)),
 		},
 	}
 	// Update state to Cancelled.
-	if err := m.UpdateTaskStatus(params.ID, taskmanager.TaskStateCanceled, cancelMsg); err != nil {
+	if err := m.UpdateTaskStatus(params.ID, protocol.TaskStateCanceled, cancelMsg); err != nil {
 		log.Errorf("Error updating status to Cancelled for task %s: %v", params.ID, err)
 		return nil, err
 	}
@@ -288,8 +290,8 @@ func (m *TaskManager) OnCancelTask(
 // OnPushNotificationSet configures push notifications for a specific task
 func (m *TaskManager) OnPushNotificationSet(
 	ctx context.Context,
-	params taskmanager.TaskPushNotificationConfig,
-) (*taskmanager.TaskPushNotificationConfig, error) {
+	params protocol.TaskPushNotificationConfig,
+) (*protocol.TaskPushNotificationConfig, error) {
 	// Check if task exists.
 	_, err := m.getTaskInternal(ctx, params.ID)
 	if err != nil {
@@ -312,8 +314,8 @@ func (m *TaskManager) OnPushNotificationSet(
 // OnPushNotificationGet retrieves the push notification configuration for a task.
 func (m *TaskManager) OnPushNotificationGet(
 	ctx context.Context,
-	params taskmanager.TaskIDParams,
-) (*taskmanager.TaskPushNotificationConfig, error) {
+	params protocol.TaskIDParams,
+) (*protocol.TaskPushNotificationConfig, error) {
 	// Check if task exists.
 	_, err := m.getTaskInternal(ctx, params.ID)
 	if err != nil {
@@ -328,11 +330,11 @@ func (m *TaskManager) OnPushNotificationGet(
 		}
 		return nil, fmt.Errorf("failed to retrieve push notification config: %w", err)
 	}
-	var config taskmanager.PushNotificationConfig
+	var config protocol.PushNotificationConfig
 	if err := json.Unmarshal(configBytes, &config); err != nil {
 		return nil, fmt.Errorf("failed to deserialize push notification config: %w", err)
 	}
-	result := &taskmanager.TaskPushNotificationConfig{
+	result := &protocol.TaskPushNotificationConfig{
 		ID:                     params.ID,
 		PushNotificationConfig: config,
 	}
@@ -342,19 +344,19 @@ func (m *TaskManager) OnPushNotificationGet(
 // OnResubscribe reestablishes an SSE stream for an existing task.
 func (m *TaskManager) OnResubscribe(
 	ctx context.Context,
-	params taskmanager.TaskIDParams,
-) (<-chan taskmanager.TaskEvent, error) {
+	params protocol.TaskIDParams,
+) (<-chan protocol.TaskEvent, error) {
 	task, err := m.getTaskInternal(ctx, params.ID)
 	if err != nil {
 		return nil, err
 	}
 	// Create a channel for events.
-	eventChan := make(chan taskmanager.TaskEvent)
+	eventChan := make(chan protocol.TaskEvent)
 	// For tasks in final state, just send a status update event and close.
 	if isFinalState(task.Status.State) {
 		go func() {
 			// Send a task status update event
-			event := taskmanager.TaskStatusUpdateEvent{
+			event := protocol.TaskStatusUpdateEvent{
 				ID:     task.ID,
 				Status: task.Status,
 				Final:  true,
@@ -382,7 +384,7 @@ func (m *TaskManager) OnResubscribe(
 	}()
 	// Send the current status as the first event.
 	go func() {
-		event := taskmanager.TaskStatusUpdateEvent{
+		event := protocol.TaskStatusUpdateEvent{
 			ID:     task.ID,
 			Status: task.Status,
 			Final:  isFinalState(task.Status.State),
@@ -404,8 +406,8 @@ func (m *TaskManager) OnResubscribe(
 // UpdateTaskStatus updates the task's state and notifies subscribers.
 func (m *TaskManager) UpdateTaskStatus(
 	taskID string,
-	state taskmanager.TaskState,
-	message *taskmanager.Message,
+	state protocol.TaskState,
+	message *protocol.Message,
 ) error {
 	ctx := context.Background()
 	task, err := m.getTaskInternal(ctx, taskID)
@@ -414,7 +416,7 @@ func (m *TaskManager) UpdateTaskStatus(
 		return err
 	}
 	// Update status fields.
-	task.Status = taskmanager.TaskStatus{
+	task.Status = protocol.TaskStatus{
 		State:     state,
 		Message:   message,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -433,7 +435,7 @@ func (m *TaskManager) UpdateTaskStatus(
 		m.storeMessage(ctx, taskID, *message)
 	}
 	// Notify subscribers.
-	m.notifySubscribers(taskID, taskmanager.TaskStatusUpdateEvent{
+	m.notifySubscribers(taskID, protocol.TaskStatusUpdateEvent{
 		ID:     taskID,
 		Status: task.Status,
 		Final:  isFinalState(state),
@@ -442,7 +444,7 @@ func (m *TaskManager) UpdateTaskStatus(
 }
 
 // AddArtifact adds an artifact to the task and notifies subscribers.
-func (m *TaskManager) AddArtifact(taskID string, artifact taskmanager.Artifact) error {
+func (m *TaskManager) AddArtifact(taskID string, artifact protocol.Artifact) error {
 	ctx := context.Background()
 	task, err := m.getTaskInternal(ctx, taskID)
 	if err != nil {
@@ -451,7 +453,7 @@ func (m *TaskManager) AddArtifact(taskID string, artifact taskmanager.Artifact) 
 	}
 	// Append the artifact.
 	if task.Artifacts == nil {
-		task.Artifacts = make([]taskmanager.Artifact, 0, 1)
+		task.Artifacts = make([]protocol.Artifact, 0, 1)
 	}
 	task.Artifacts = append(task.Artifacts, artifact)
 	// Store updated task
@@ -465,7 +467,7 @@ func (m *TaskManager) AddArtifact(taskID string, artifact taskmanager.Artifact) 
 	}
 	// Notify subscribers.
 	finalEvent := artifact.LastChunk != nil && *artifact.LastChunk
-	m.notifySubscribers(taskID, taskmanager.TaskArtifactUpdateEvent{
+	m.notifySubscribers(taskID, protocol.TaskArtifactUpdateEvent{
 		ID:       taskID,
 		Artifact: artifact,
 		Final:    finalEvent,
@@ -476,14 +478,14 @@ func (m *TaskManager) AddArtifact(taskID string, artifact taskmanager.Artifact) 
 // --- Internal Helper Methods ---
 
 // isFinalState checks if a TaskState represents a terminal state.
-func isFinalState(state taskmanager.TaskState) bool {
-	return state == taskmanager.TaskStateCompleted ||
-		state == taskmanager.TaskStateFailed ||
-		state == taskmanager.TaskStateCanceled
+func isFinalState(state protocol.TaskState) bool {
+	return state == protocol.TaskStateCompleted ||
+		state == protocol.TaskStateFailed ||
+		state == protocol.TaskStateCanceled
 }
 
 // getTaskInternal retrieves a task from Redis.
-func (m *TaskManager) getTaskInternal(ctx context.Context, taskID string) (*taskmanager.Task, error) {
+func (m *TaskManager) getTaskInternal(ctx context.Context, taskID string) (*protocol.Task, error) {
 	taskKey := taskPrefix + taskID
 	taskBytes, err := m.client.Get(ctx, taskKey).Bytes()
 	if err != nil {
@@ -492,7 +494,7 @@ func (m *TaskManager) getTaskInternal(ctx context.Context, taskID string) (*task
 		}
 		return nil, fmt.Errorf("failed to retrieve task from Redis: %w", err)
 	}
-	var task taskmanager.Task
+	var task protocol.Task
 	if err := json.Unmarshal(taskBytes, &task); err != nil {
 		return nil, fmt.Errorf("failed to deserialize task: %w", err)
 	}
@@ -500,29 +502,29 @@ func (m *TaskManager) getTaskInternal(ctx context.Context, taskID string) (*task
 }
 
 // upsertTask creates a new task or updates metadata if it already exists.
-func (m *TaskManager) upsertTask(ctx context.Context, params taskmanager.SendTaskParams) *taskmanager.Task {
+func (m *TaskManager) upsertTask(ctx context.Context, params protocol.SendTaskParams) *protocol.Task {
 	taskKey := taskPrefix + params.ID
 	// Try to get existing task.
 	existingTaskBytes, err := m.client.Get(ctx, taskKey).Bytes()
-	var task *taskmanager.Task
+	var task *protocol.Task
 	if err == nil {
 		// Task exists, deserialize it.
-		task = &taskmanager.Task{}
+		task = &protocol.Task{}
 		if err := json.Unmarshal(existingTaskBytes, task); err != nil {
 			log.Errorf("Failed to deserialize existing task %s: %v", params.ID, err)
 			// Fall back to creating a new task.
-			task = taskmanager.NewTask(params.ID, params.SessionID)
+			task = protocol.NewTask(params.ID, params.SessionID)
 		}
 		log.Debugf("Updating existing task %s", params.ID)
 	} else if err == redis.Nil {
 		// Task doesn't exist, create new one.
-		task = taskmanager.NewTask(params.ID, params.SessionID)
+		task = protocol.NewTask(params.ID, params.SessionID)
 		log.Infof("Created new task %s (Session: %v)", params.ID, params.SessionID)
 	} else {
 		// Redis error.
 		log.Errorf("Redis error when retrieving task %s: %v", params.ID, err)
 		// Fall back to creating a new task.
-		task = taskmanager.NewTask(params.ID, params.SessionID)
+		task = protocol.NewTask(params.ID, params.SessionID)
 	}
 	// Update metadata if provided.
 	if params.Metadata != nil {
@@ -546,15 +548,15 @@ func (m *TaskManager) upsertTask(ctx context.Context, params taskmanager.SendTas
 }
 
 // storeMessage adds a message to the task's history in Redis.
-func (m *TaskManager) storeMessage(ctx context.Context, taskID string, message taskmanager.Message) {
+func (m *TaskManager) storeMessage(ctx context.Context, taskID string, message protocol.Message) {
 	messagesKey := messagePrefix + taskID
 	// Create a copy of the message to store.
-	messageCopy := taskmanager.Message{
+	messageCopy := protocol.Message{
 		Role:     message.Role,
 		Metadata: message.Metadata,
 	}
 	if message.Parts != nil {
-		messageCopy.Parts = make([]taskmanager.Part, len(message.Parts))
+		messageCopy.Parts = make([]protocol.Part, len(message.Parts))
 		copy(messageCopy.Parts, message.Parts)
 	}
 	// Serialize the message.
@@ -577,7 +579,7 @@ func (m *TaskManager) getMessageHistory(
 	ctx context.Context,
 	taskID string,
 	limit int,
-) ([]taskmanager.Message, error) {
+) ([]protocol.Message, error) {
 	messagesKey := messagePrefix + taskID
 	// Get the message count.
 	count, err := m.client.LLen(ctx, messagesKey).Result()
@@ -598,9 +600,9 @@ func (m *TaskManager) getMessageHistory(
 		return nil, fmt.Errorf("failed to retrieve messages: %w", err)
 	}
 	// Deserialize messages.
-	messages := make([]taskmanager.Message, 0, len(messagesBytesRaw))
+	messages := make([]protocol.Message, 0, len(messagesBytesRaw))
 	for _, msgBytes := range messagesBytesRaw {
-		var msg taskmanager.Message
+		var msg protocol.Message
 		if err := json.Unmarshal([]byte(msgBytes), &msg); err != nil {
 			log.Errorf("Failed to deserialize message for task %s: %v", taskID, err)
 			continue // Skip invalid messages.
@@ -611,12 +613,12 @@ func (m *TaskManager) getMessageHistory(
 }
 
 // addSubscriber adds a channel to the list of subscribers for a task.
-func (m *TaskManager) addSubscriber(taskID string, ch chan<- taskmanager.TaskEvent) {
+func (m *TaskManager) addSubscriber(taskID string, ch chan<- protocol.TaskEvent) {
 	m.subMu.Lock()
 	defer m.subMu.Unlock()
 	// If the task has no subscribers, create a new list.
 	if _, exists := m.subscribers[taskID]; !exists {
-		m.subscribers[taskID] = make([]chan<- taskmanager.TaskEvent, 0, 1)
+		m.subscribers[taskID] = make([]chan<- protocol.TaskEvent, 0, 1)
 	}
 	// Add the new subscriber.
 	m.subscribers[taskID] = append(m.subscribers[taskID], ch)
@@ -624,7 +626,7 @@ func (m *TaskManager) addSubscriber(taskID string, ch chan<- taskmanager.TaskEve
 }
 
 // removeSubscriber removes a specific channel from the list of subscribers for a task.
-func (m *TaskManager) removeSubscriber(taskID string, ch chan<- taskmanager.TaskEvent) {
+func (m *TaskManager) removeSubscriber(taskID string, ch chan<- protocol.TaskEvent) {
 	m.subMu.Lock()
 	defer m.subMu.Unlock()
 	channels, exists := m.subscribers[taskID]
@@ -632,7 +634,7 @@ func (m *TaskManager) removeSubscriber(taskID string, ch chan<- taskmanager.Task
 		return // No subscribers for this task.
 	}
 	// Filter out the channel to remove.
-	var newChannels []chan<- taskmanager.TaskEvent
+	var newChannels []chan<- protocol.TaskEvent
 	for _, existingCh := range channels {
 		if existingCh != ch {
 			newChannels = append(newChannels, existingCh)
@@ -648,7 +650,7 @@ func (m *TaskManager) removeSubscriber(taskID string, ch chan<- taskmanager.Task
 }
 
 // notifySubscribers sends an event to all current subscribers of a task.
-func (m *TaskManager) notifySubscribers(taskID string, event taskmanager.TaskEvent) {
+func (m *TaskManager) notifySubscribers(taskID string, event protocol.TaskEvent) {
 	m.subMu.RLock()
 	subs, exists := m.subscribers[taskID]
 	if !exists || len(subs) == 0 {
@@ -656,7 +658,7 @@ func (m *TaskManager) notifySubscribers(taskID string, event taskmanager.TaskEve
 		return // No subscribers to notify.
 	}
 	// Copy the slice of channels under read lock
-	subsCopy := make([]chan<- taskmanager.TaskEvent, len(subs))
+	subsCopy := make([]chan<- protocol.TaskEvent, len(subs))
 	copy(subsCopy, subs)
 	m.subMu.RUnlock()
 	log.Debugf("Notifying %d subscribers for task %s (Event Type: %T, Final: %t)",
@@ -690,10 +692,10 @@ func (m *TaskManager) Close() error {
 		for _, ch := range channels {
 			// Try to notify of closing but don't block
 			select {
-			case ch <- taskmanager.TaskStatusUpdateEvent{
+			case ch <- protocol.TaskStatusUpdateEvent{
 				ID: taskID,
-				Status: taskmanager.TaskStatus{
-					State:     taskmanager.TaskStateUnknown,
+				Status: protocol.TaskStatus{
+					State:     protocol.TaskStateUnknown,
 					Timestamp: time.Now().UTC().Format(time.RFC3339),
 				},
 				Final: true,
@@ -702,7 +704,7 @@ func (m *TaskManager) Close() error {
 			}
 		}
 	}
-	m.subscribers = make(map[string][]chan<- taskmanager.TaskEvent)
+	m.subscribers = make(map[string][]chan<- protocol.TaskEvent)
 	m.subMu.Unlock()
 	// Close the Redis client.
 	return m.client.Close()

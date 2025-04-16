@@ -20,7 +20,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
 	"trpc.group/trpc-go/a2a-go/client"
+	"trpc.group/trpc-go/a2a-go/protocol"
 	"trpc.group/trpc-go/a2a-go/server"
 	"trpc.group/trpc-go/a2a-go/taskmanager"
 )
@@ -58,14 +60,14 @@ type testStreamingProcessor struct{}
 func (p *testStreamingProcessor) Process(
 	ctx context.Context,
 	taskID string,
-	msg taskmanager.Message,
+	msg protocol.Message,
 	handle taskmanager.TaskHandle,
 ) error {
 	log.Printf("[testStreamingProcessor] Processing task %s", taskID)
 
 	var inputText string
 	for _, part := range msg.Parts {
-		if textPart, ok := part.(taskmanager.TextPart); ok { // Check for value type
+		if textPart, ok := part.(protocol.TextPart); ok { // Check for value type
 			inputText = textPart.Text
 			break
 		}
@@ -74,7 +76,7 @@ func (p *testStreamingProcessor) Process(
 	if inputText == "" {
 		// If no text part found, try legacy TextPart check just in case
 		for _, part := range msg.Parts {
-			if textPart, ok := part.(taskmanager.TextPart); ok {
+			if textPart, ok := part.(protocol.TextPart); ok {
 				log.Printf("WARNING: Found legacy TextPart (value) in message for task %s", taskID)
 				inputText = textPart.Text
 				break
@@ -97,24 +99,24 @@ func (p *testStreamingProcessor) Process(
 			end = len(reversedText)
 		}
 		chunk := reversedText[i:end]
-		statusMsg := &taskmanager.Message{
-			Role: taskmanager.MessageRoleAgent,
-			Parts: []taskmanager.Part{
-				taskmanager.NewTextPart(fmt.Sprintf("Processing chunk: %s", chunk)), // Returns TextPart
+		statusMsg := &protocol.Message{
+			Role: protocol.MessageRoleAgent,
+			Parts: []protocol.Part{
+				protocol.NewTextPart(fmt.Sprintf("Processing chunk: %s", chunk)), // Returns TextPart
 			},
 		}
-		if err := handle.UpdateStatus(taskmanager.TaskStateWorking, statusMsg); err != nil {
+		if err := handle.UpdateStatus(protocol.TaskStateWorking, statusMsg); err != nil {
 			log.Printf("[testStreamingProcessor] Error sending working status chunk: %v", err)
 			return err // Propagate error if sending status fails.
 		}
 	}
 
 	// Send the final artifact containing the full reversed text.
-	finalArtifact := taskmanager.Artifact{
+	finalArtifact := protocol.Artifact{
 		Name:        stringPtr("Processed Text"),
 		Description: stringPtr("The reversed input text."),
-		Parts: []taskmanager.Part{
-			taskmanager.NewTextPart(reversedText), // Returns TextPart
+		Parts: []protocol.Part{
+			protocol.NewTextPart(reversedText), // Returns TextPart
 		},
 		Index:     0,
 		LastChunk: boolPtr(true),
@@ -125,15 +127,15 @@ func (p *testStreamingProcessor) Process(
 	}
 
 	// Send final 'Completed' status.
-	completionMsg := &taskmanager.Message{
-		Role: taskmanager.MessageRoleAgent,
-		Parts: []taskmanager.Part{
-			taskmanager.NewTextPart(
+	completionMsg := &protocol.Message{
+		Role: protocol.MessageRoleAgent,
+		Parts: []protocol.Part{
+			protocol.NewTextPart(
 				fmt.Sprintf("Task %s completed successfully. Result: %s", taskID, reversedText),
 			), // Include the reversed text in the final message
 		},
 	}
-	if err := handle.UpdateStatus(taskmanager.TaskStateCompleted, completionMsg); err != nil {
+	if err := handle.UpdateStatus(protocol.TaskStateCompleted, completionMsg); err != nil {
 		log.Printf("[testStreamingProcessor] Error sending completed status: %v", err)
 		return err // Propagate error if sending final status fails.
 	}
@@ -163,7 +165,7 @@ func newTestBasicTaskManager(t *testing.T) *testBasicTaskManager {
 
 // Helper to mimic unexported upsertTask for testing purposes.
 // Needs access to baseTm's fields.
-func (m *testBasicTaskManager) testUpsertTask(params taskmanager.SendTaskParams) *taskmanager.Task {
+func (m *testBasicTaskManager) testUpsertTask(params protocol.SendTaskParams) *protocol.Task {
 	// NOTE: This accesses fields of baseTm directly, which relies on them being accessible
 	// (e.g., within the same logical package structure if tests were internal, or if fields were exported).
 	// For this test setup, we assume accessibility for direct map manipulation.
@@ -172,7 +174,7 @@ func (m *testBasicTaskManager) testUpsertTask(params taskmanager.SendTaskParams)
 
 	task, exists := m.Tasks[params.ID]
 	if !exists {
-		task = taskmanager.NewTask(params.ID, params.SessionID)
+		task = protocol.NewTask(params.ID, params.SessionID)
 		m.Tasks[params.ID] = task
 		log.Printf("[Test TM Helper] Created new task %s via testUpsertTask", params.ID)
 	} else {
@@ -193,13 +195,13 @@ func (m *testBasicTaskManager) testUpsertTask(params taskmanager.SendTaskParams)
 
 // Helper to mimic unexported storeMessage for testing purposes.
 // Needs access to baseTm's fields.
-func (m *testBasicTaskManager) testStoreMessage(taskID string, message taskmanager.Message) {
+func (m *testBasicTaskManager) testStoreMessage(taskID string, message protocol.Message) {
 	// NOTE: This accesses fields of baseTm directly.
 	m.MessagesMutex.Lock()
 	defer m.MessagesMutex.Unlock()
 
 	if _, exists := m.Messages[taskID]; !exists {
-		m.Messages[taskID] = make([]taskmanager.Message, 0, 1)
+		m.Messages[taskID] = make([]protocol.Message, 0, 1)
 	}
 	m.Messages[taskID] = append(m.Messages[taskID], message)
 	log.Printf("[Test TM Helper] Stored message for task %s via testStoreMessage", taskID)
@@ -210,8 +212,8 @@ func (m *testBasicTaskManager) testStoreMessage(taskID string, message taskmanag
 // OnSendTask delegates to the composed MemoryTaskManager.
 func (m *testBasicTaskManager) OnSendTask(
 	ctx context.Context,
-	params taskmanager.SendTaskParams,
-) (*taskmanager.Task, error) {
+	params protocol.SendTaskParams,
+) (*protocol.Task, error) {
 	log.Printf("[Test TM Wrapper] OnSendTask called for %s, delegating to base.", params.ID)
 	// In a real compositional wrapper, you might add pre/post logic here.
 	return m.MemoryTaskManager.OnSendTask(ctx, params)
@@ -220,8 +222,8 @@ func (m *testBasicTaskManager) OnSendTask(
 // OnGetTask delegates to the composed MemoryTaskManager.
 func (m *testBasicTaskManager) OnGetTask(
 	ctx context.Context,
-	params taskmanager.TaskQueryParams,
-) (*taskmanager.Task, error) {
+	params protocol.TaskQueryParams,
+) (*protocol.Task, error) {
 	log.Printf("[Test TM Wrapper] OnGetTask called for %s, delegating to base.", params.ID)
 	return m.MemoryTaskManager.OnGetTask(ctx, params)
 }
@@ -229,8 +231,8 @@ func (m *testBasicTaskManager) OnGetTask(
 // OnCancelTask delegates to the composed MemoryTaskManager.
 func (m *testBasicTaskManager) OnCancelTask(
 	ctx context.Context,
-	params taskmanager.TaskIDParams,
-) (*taskmanager.Task, error) {
+	params protocol.TaskIDParams,
+) (*protocol.Task, error) {
 	log.Printf("[Test TM Wrapper] OnCancelTask called for %s, delegating to base.", params.ID)
 	return m.MemoryTaskManager.OnCancelTask(ctx, params)
 }
@@ -239,8 +241,8 @@ func (m *testBasicTaskManager) OnCancelTask(
 // The baseTm's method now handles the goroutine and processor invocation correctly.
 func (m *testBasicTaskManager) OnSendTaskSubscribe(
 	ctx context.Context,
-	params taskmanager.SendTaskParams,
-) (<-chan taskmanager.TaskEvent, error) {
+	params protocol.SendTaskParams,
+) (<-chan protocol.TaskEvent, error) {
 	log.Printf("[Test TM Wrapper] OnSendTaskSubscribe called for %s, delegating to base.", params.ID)
 	// Call the embedded MemoryTaskManager's method directly
 	return m.MemoryTaskManager.OnSendTaskSubscribe(ctx, params)
@@ -251,8 +253,8 @@ func (m *testBasicTaskManager) OnSendTaskSubscribe(
 func (m *testBasicTaskManager) ProcessTask(
 	ctx context.Context,
 	taskID string,
-	message taskmanager.Message,
-) (*taskmanager.Task, error) {
+	message protocol.Message,
+) (*protocol.Task, error) {
 	log.Printf("WARNING: testBasicTaskManager.ProcessTask called directly for %s. "+
 		"This should not happen in the compositional setup.", taskID)
 	// Return an error or a specific state to indicate this shouldn't be called.
@@ -352,39 +354,39 @@ func createDefaultTestAgentCard() server.AgentCard {
 			Streaming:              true,
 			StateTransitionHistory: true,
 		},
-		DefaultInputModes:  []string{string(taskmanager.PartTypeText)},
-		DefaultOutputModes: []string{string(taskmanager.PartTypeText)},
+		DefaultInputModes:  []string{string(protocol.PartTypeText)},
+		DefaultOutputModes: []string{string(protocol.PartTypeText)},
 	}
 }
 
 // sendTestMessage sends a test message and returns the task.
-func (h *testHelper) sendTestMessage(taskID string, text string) (*taskmanager.Task, error) {
-	return h.client.SendTasks(context.Background(), taskmanager.SendTaskParams{
+func (h *testHelper) sendTestMessage(taskID string, text string) (*protocol.Task, error) {
+	return h.client.SendTasks(context.Background(), protocol.SendTaskParams{
 		ID: taskID,
-		Message: taskmanager.Message{
-			Role: taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{
-				taskmanager.NewTextPart(text),
+		Message: protocol.Message{
+			Role: protocol.MessageRoleUser,
+			Parts: []protocol.Part{
+				protocol.NewTextPart(text),
 			},
 		},
 	})
 }
 
 // isFinalState checks if the given task state is a terminal state.
-func isFinalState(state taskmanager.TaskState) bool {
-	return state == taskmanager.TaskStateCompleted ||
-		state == taskmanager.TaskStateFailed ||
-		state == taskmanager.TaskStateCanceled
+func isFinalState(state protocol.TaskState) bool {
+	return state == protocol.TaskStateCompleted ||
+		state == protocol.TaskStateFailed ||
+		state == protocol.TaskStateCanceled
 }
 
 // waitForTaskCompletion waits for a task to reach a final state.
-func waitForTaskCompletion(ctx context.Context, client *client.A2AClient, taskID string) (*taskmanager.Task, error) {
+func waitForTaskCompletion(ctx context.Context, client *client.A2AClient, taskID string) (*protocol.Task, error) {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
-			task, err := client.GetTasks(ctx, taskmanager.TaskQueryParams{ID: taskID})
+			task, err := client.GetTasks(ctx, protocol.TaskQueryParams{ID: taskID})
 			if err != nil {
 				return nil, err
 			}
@@ -399,8 +401,8 @@ func waitForTaskCompletion(ctx context.Context, client *client.A2AClient, taskID
 }
 
 // collectAllTaskEvents collects all events from a task event channel until it's closed.
-func collectAllTaskEvents(eventChan <-chan taskmanager.TaskEvent) []taskmanager.TaskEvent {
-	var events []taskmanager.TaskEvent
+func collectAllTaskEvents(eventChan <-chan protocol.TaskEvent) []protocol.TaskEvent {
+	var events []protocol.TaskEvent
 	timeout := time.After(3 * time.Second) // Safety timeout
 	done := false
 	for !done {
@@ -438,9 +440,9 @@ func collectAllTaskEvents(eventChan <-chan taskmanager.TaskEvent) []taskmanager.
 }
 
 // getTextPartContent extracts text content from parts of a message.
-func getTextPartContent(parts []taskmanager.Part) string {
+func getTextPartContent(parts []protocol.Part) string {
 	for _, part := range parts {
-		if textPart, ok := part.(taskmanager.TextPart); ok {
+		if textPart, ok := part.(protocol.TextPart); ok {
 			return textPart.Text
 		}
 	}
@@ -460,12 +462,12 @@ func TestE2E_BasicAgent_Streaming(t *testing.T) {
 
 	// Subscribe to task events
 	eventChan, err := helper.client.StreamTask(
-		context.Background(), taskmanager.SendTaskParams{
+		context.Background(), protocol.SendTaskParams{
 			ID: taskID,
-			Message: taskmanager.Message{
-				Role: taskmanager.MessageRoleUser,
-				Parts: []taskmanager.Part{
-					taskmanager.NewTextPart(inputText),
+			Message: protocol.Message{
+				Role: protocol.MessageRoleUser,
+				Parts: []protocol.Part{
+					protocol.NewTextPart(inputText),
 				},
 			},
 		})
@@ -479,16 +481,16 @@ func TestE2E_BasicAgent_Streaming(t *testing.T) {
 
 	// Check final state
 	lastEvent := events[len(events)-1]
-	require.Equal(t, taskmanager.TaskStateCompleted,
-		lastEvent.(taskmanager.TaskStatusUpdateEvent).Status.State, "Task should be completed")
+	require.Equal(t, protocol.TaskStateCompleted,
+		lastEvent.(protocol.TaskStatusUpdateEvent).Status.State, "Task should be completed")
 
 	// Verify task result
 	task, err := helper.client.GetTasks(
 		context.Background(),
-		taskmanager.TaskQueryParams{ID: taskID},
+		protocol.TaskQueryParams{ID: taskID},
 	)
 	require.NoError(t, err)
-	require.Equal(t, taskmanager.TaskStateCompleted, task.Status.State)
+	require.Equal(t, protocol.TaskStateCompleted, task.Status.State)
 
 	// Verify artifacts
 	require.NotEmpty(t, task.Artifacts, "Task should have artifacts")

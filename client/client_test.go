@@ -21,19 +21,20 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"trpc.group/trpc-go/a2a-go/jsonrpc"
-	"trpc.group/trpc-go/a2a-go/taskmanager"
+	"trpc.group/trpc-go/a2a-go/protocol"
 )
 
 // TestA2AClient_SendTask tests the SendTask client method covering success,
 // JSON-RPC error responses, and HTTP error scenarios.
 func TestA2AClient_SendTask(t *testing.T) {
 	taskID := "client-task-1"
-	params := taskmanager.SendTaskParams{
+	params := protocol.SendTaskParams{
 		ID: taskID,
-		Message: taskmanager.Message{
-			Role:  taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("Client test input")},
+		Message: protocol.Message{
+			Role:  protocol.MessageRoleUser,
+			Parts: []protocol.Part{protocol.NewTextPart("Client test input")},
 		},
 	}
 	paramsBytes, err := json.Marshal(params)
@@ -47,9 +48,9 @@ func TestA2AClient_SendTask(t *testing.T) {
 
 	t.Run("SendTask Success", func(t *testing.T) {
 		// Prepare mock server success response.
-		respTask := taskmanager.Task{
+		respTask := protocol.Task{
 			ID:     taskID,
-			Status: taskmanager.TaskStatus{State: taskmanager.TaskStateSubmitted},
+			Status: protocol.TaskStatus{State: protocol.TaskStateSubmitted},
 		}
 		respResultBytes, err := json.Marshal(respTask)
 		require.NoError(t, err)
@@ -77,7 +78,7 @@ func TestA2AClient_SendTask(t *testing.T) {
 		require.NotNil(t, result, "Result should not be nil on success")
 
 		assert.Equal(t, taskID, result.ID)
-		assert.Equal(t, taskmanager.TaskStateSubmitted, result.Status.State)
+		assert.Equal(t, protocol.TaskStateSubmitted, result.Status.State)
 	})
 
 	t.Run("SendTask HTTP Error", func(t *testing.T) {
@@ -109,11 +110,11 @@ func TestA2AClient_SendTask(t *testing.T) {
 // It covers success, HTTP errors, and non-SSE response scenarios.
 func TestA2AClient_StreamTask(t *testing.T) {
 	taskID := "client-task-sse-1"
-	params := taskmanager.SendTaskParams{
+	params := protocol.SendTaskParams{
 		ID: taskID,
-		Message: taskmanager.Message{
-			Role:  taskmanager.MessageRoleUser,
-			Parts: []taskmanager.Part{taskmanager.NewTextPart("Client SSE test")},
+		Message: protocol.Message{
+			Role:  protocol.MessageRoleUser,
+			Parts: []protocol.Part{protocol.NewTextPart("Client SSE test")},
 		},
 	}
 	paramsBytes, err := json.Marshal(params)
@@ -127,19 +128,19 @@ func TestA2AClient_StreamTask(t *testing.T) {
 
 	t.Run("StreamTask Success", func(t *testing.T) {
 		// Prepare mock SSE stream data.
-		sseEvent1Data, _ := json.Marshal(taskmanager.TaskStatusUpdateEvent{
+		sseEvent1Data, _ := json.Marshal(protocol.TaskStatusUpdateEvent{
 			ID:     taskID,
-			Status: taskmanager.TaskStatus{State: taskmanager.TaskStateWorking},
+			Status: protocol.TaskStatus{State: protocol.TaskStateWorking},
 			Final:  false,
 		})
-		sseEvent2Data, _ := json.Marshal(taskmanager.TaskArtifactUpdateEvent{
+		sseEvent2Data, _ := json.Marshal(protocol.TaskArtifactUpdateEvent{
 			ID:       taskID,
-			Artifact: taskmanager.Artifact{Index: 0, Parts: []taskmanager.Part{taskmanager.NewTextPart("SSE data")}},
+			Artifact: protocol.Artifact{Index: 0, Parts: []protocol.Part{protocol.NewTextPart("SSE data")}},
 			Final:    false,
 		})
-		sseEvent3Data, _ := json.Marshal(taskmanager.TaskStatusUpdateEvent{
+		sseEvent3Data, _ := json.Marshal(protocol.TaskStatusUpdateEvent{
 			ID:     taskID,
-			Status: taskmanager.TaskStatus{State: taskmanager.TaskStateCompleted},
+			Status: protocol.TaskStatus{State: protocol.TaskStateCompleted},
 			Final:  true,
 		})
 
@@ -178,7 +179,7 @@ func TestA2AClient_StreamTask(t *testing.T) {
 		require.NotNil(t, eventChan, "Event channel should not be nil")
 
 		// Read events from channel with timeout.
-		receivedEvents := []taskmanager.TaskEvent{}
+		receivedEvents := []protocol.TaskEvent{}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 	loop:
@@ -196,16 +197,16 @@ func TestA2AClient_StreamTask(t *testing.T) {
 
 		// Assert the content and order of received events.
 		require.Len(t, receivedEvents, 3, "Should receive exactly 3 events")
-		_, ok1 := receivedEvents[0].(taskmanager.TaskStatusUpdateEvent)
-		_, ok2 := receivedEvents[1].(taskmanager.TaskArtifactUpdateEvent)
-		_, ok3 := receivedEvents[2].(taskmanager.TaskStatusUpdateEvent)
+		_, ok1 := receivedEvents[0].(protocol.TaskStatusUpdateEvent)
+		_, ok2 := receivedEvents[1].(protocol.TaskArtifactUpdateEvent)
+		_, ok3 := receivedEvents[2].(protocol.TaskStatusUpdateEvent)
 		assert.True(t, ok1 && ok2 && ok3, "Received event types mismatch expected sequence")
-		assert.Equal(t, taskmanager.TaskStateWorking,
-			receivedEvents[0].(taskmanager.TaskStatusUpdateEvent).Status.State, "First event state mismatch")
+		assert.Equal(t, protocol.TaskStateWorking,
+			receivedEvents[0].(protocol.TaskStatusUpdateEvent).Status.State, "First event state mismatch")
 		assert.False(t, receivedEvents[0].IsFinal(), "First event should not be final")
 		assert.False(t, receivedEvents[1].IsFinal(), "Second event should not be final")
-		assert.Equal(t, taskmanager.TaskStateCompleted,
-			receivedEvents[2].(taskmanager.TaskStatusUpdateEvent).Status.State, "Third event state mismatch")
+		assert.Equal(t, protocol.TaskStateCompleted,
+			receivedEvents[2].(protocol.TaskStatusUpdateEvent).Status.State, "Third event state mismatch")
 		assert.True(t, receivedEvents[2].IsFinal(), "Last event should be final")
 	})
 
