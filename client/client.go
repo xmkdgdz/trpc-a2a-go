@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -221,8 +222,12 @@ func (c *A2AClient) processSSEStream(
 			if err != nil {
 				if err == io.EOF {
 					log.Debugf("SSE stream ended cleanly (EOF) for task %s", taskID)
+				} else if errors.Is(err, context.Canceled) ||
+					strings.Contains(err.Error(), "connection reset by peer") {
+					// Client disconnected normally
+					log.Debugf("Client disconnected from SSE stream for task %s", taskID)
 				} else {
-					// Log unexpected errors (like network issues or parsing problems).
+					// Log unexpected errors (like network issues or parsing problems)
 					log.Errorf("Error reading SSE stream for task %s: %v", taskID, err)
 				}
 				return // Stop processing on any error or EOF.

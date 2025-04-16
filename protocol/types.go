@@ -409,8 +409,6 @@ type SendTaskParams struct {
 	SessionID *string `json:"sessionId,omitempty"`
 	// Message is the user's message initiating the task.
 	Message Message `json:"message"`
-	// AcceptedOutputModes is the client-accepted output modes.
-	AcceptedOutputModes []string `json:"acceptedOutputModes,omitempty"`
 	// HistoryLength is the requested history length in response.
 	HistoryLength *int `json:"historyLength,omitempty"`
 	// Metadata is the optional metadata.

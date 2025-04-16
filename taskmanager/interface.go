@@ -26,6 +26,11 @@ type TaskHandle interface {
 	// AddArtifact adds a new artifact to the task.
 	// Returns an error if the task cannot be found or updated.
 	AddArtifact(artifact protocol.Artifact) error
+
+	// IsStreamingRequest returns true if the task was initiated via a streaming request
+	// (OnSendTaskSubscribe) rather than a synchronous request (OnSendTask).
+	// This allows the TaskProcessor to adapt its behavior based on the request type.
+	IsStreamingRequest() bool
 }
 
 // TaskProcessor defines the interface for the core agent logic that processes a task.

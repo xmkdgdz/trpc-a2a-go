@@ -108,6 +108,17 @@ func (h *redisTaskHandle) AddArtifact(artifact protocol.Artifact) error {
 	return h.manager.AddArtifact(h.taskID, artifact)
 }
 
+// IsStreamingRequest implements TaskHandle.
+// It returns true if there are active subscribers for this task,
+// indicating it was initiated with OnSendTaskSubscribe rather than OnSendTask.
+func (h *redisTaskHandle) IsStreamingRequest() bool {
+	h.manager.subMu.RLock()
+	defer h.manager.subMu.RUnlock()
+
+	subscribers, exists := h.manager.subscribers[h.taskID]
+	return exists && len(subscribers) > 0
+}
+
 // OnSendTask handles the creation or retrieval of a task and initiates synchronous processing.
 func (m *TaskManager) OnSendTask(ctx context.Context, params protocol.SendTaskParams) (*protocol.Task, error) {
 	// Create or update task

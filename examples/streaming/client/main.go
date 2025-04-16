@@ -62,9 +62,8 @@ func main() {
 		log.Info("Server supports streaming, using StreamTask...")
 
 		taskParams := protocol.SendTaskParams{
-			ID:                  taskID,
-			Message:             message,
-			AcceptedOutputModes: []string{"stream"},
+			ID:      taskID,
+			Message: message,
 		}
 
 		streamChan, err := c.StreamTask(ctx, taskParams)

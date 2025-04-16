@@ -700,6 +700,21 @@ func (h *mockTaskHandle) AddArtifact(artifact protocol.Artifact) error {
 	return nil
 }
 
+// IsStreamingRequest implements the TaskHandle interface.
+// It determines if this task was initiated via a streaming request.
+func (h *mockTaskHandle) IsStreamingRequest() bool {
+	// In the mock implementation, we'll check for subscribers as a proxy
+	// for determining if this is a streaming request
+	for _, sub := range h.manager.tasks {
+		if sub.ID == h.taskID {
+			// For testing purposes, assume it's streaming if the task exists
+			// This is a simplification for the mock
+			return true
+		}
+	}
+	return false
+}
+
 // AddResponse adds a response to a task.
 func (h *mockTaskHandle) AddResponse(response protocol.Message) error {
 	task, err := h.manager.Task(h.taskID)

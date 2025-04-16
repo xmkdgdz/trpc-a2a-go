@@ -31,6 +31,17 @@ func (h *memoryTaskHandle) AddArtifact(artifact protocol.Artifact) error {
 	return h.manager.AddArtifact(h.taskID, artifact)
 }
 
+// IsStreamingRequest checks if this task was initiated with a streaming request (OnSendTaskSubscribe).
+// It returns true if there are active subscribers for this task, indicating it was initiated
+// with OnSendTaskSubscribe rather than OnSendTask.
+func (h *memoryTaskHandle) IsStreamingRequest() bool {
+	h.manager.SubMutex.RLock()
+	defer h.manager.SubMutex.RUnlock()
+
+	subscribers, exists := h.manager.Subscribers[h.taskID]
+	return exists && len(subscribers) > 0
+}
+
 // isFinalState checks if a TaskState represents a terminal state.
 // Not exported as it's an internal helper.
 func isFinalState(state protocol.TaskState) bool {

@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -54,6 +55,18 @@ func (p *streamingTaskProcessor) Process(
 		_ = handle.UpdateStatus(protocol.TaskStateFailed, &failedMessage)
 		return fmt.Errorf(errMsg)
 	}
+
+	// Check if this is a streaming request
+	isStreaming := handle.IsStreamingRequest()
+
+	// If not streaming, use a simplified process flow with fewer updates
+	if !isStreaming {
+		log.Printf("Task %s using non-streaming mode", taskID)
+		return p.processNonStreaming(ctx, taskID, text, handle)
+	}
+
+	// Continue with streaming process
+	log.Printf("Task %s using streaming mode", taskID)
 
 	// Update status to Working with an initial message
 	initialMessage := protocol.NewMessage(
@@ -139,6 +152,57 @@ func (p *streamingTaskProcessor) Process(
 	return nil
 }
 
+// processNonStreaming handles processing for non-streaming requests
+// It processes the entire text at once and returns a single result
+func (p *streamingTaskProcessor) processNonStreaming(
+	ctx context.Context,
+	taskID string,
+	text string,
+	handle taskmanager.TaskHandle,
+) error {
+	// Update status to Working with an initial message
+	initialMessage := protocol.NewMessage(
+		protocol.MessageRoleAgent,
+		[]protocol.Part{protocol.NewTextPart("Processing your text...")},
+	)
+	if err := handle.UpdateStatus(protocol.TaskStateWorking, &initialMessage); err != nil {
+		log.Printf("Error updating initial status for task %s: %v", taskID, err)
+		return err
+	}
+
+	// Process the entire text at once
+	processedText := reverseString(text)
+
+	// Create a single artifact with the result
+	artifact := protocol.Artifact{
+		Name:        stringPtr("Processed Text"),
+		Description: stringPtr("Complete processed text"),
+		Index:       0,
+		Parts:       []protocol.Part{protocol.NewTextPart(processedText)},
+		LastChunk:   boolPtr(true),
+	}
+
+	// Add the artifact
+	if err := handle.AddArtifact(artifact); err != nil {
+		log.Printf("Error adding artifact for task %s: %v", taskID, err)
+	}
+
+	// Final completion status update
+	completeMessage := protocol.NewMessage(
+		protocol.MessageRoleAgent,
+		[]protocol.Part{
+			protocol.NewTextPart(
+				fmt.Sprintf("Processing complete. Input: %s -> Output: %s", text, processedText))},
+	)
+	if err := handle.UpdateStatus(protocol.TaskStateCompleted, &completeMessage); err != nil {
+		log.Printf("Error updating final status for task %s: %v", taskID, err)
+		return fmt.Errorf("failed to update final task status: %w", err)
+	}
+
+	log.Printf("Task %s non-streaming completed successfully.", taskID)
+	return nil
+}
+
 // extractText extracts the first text part from a message.
 func extractText(message protocol.Message) string {
 	for _, part := range message.Parts {
@@ -151,43 +215,119 @@ func extractText(message protocol.Message) string {
 }
 
 // splitTextIntoChunks splits text into chunks of roughly the specified size.
+// Ensures splits happen at word boundaries to avoid breaking words.
 func splitTextIntoChunks(text string, chunkSize int) []string {
+	// If text is short enough, return it as a single chunk
 	if len(text) <= chunkSize {
 		return []string{text}
 	}
 
-	var chunks []string
+	// Split text by words to ensure we don't break words
 	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{text}
+	}
+
+	chunks := []string{}
 	currentChunk := ""
 
 	for _, word := range words {
-		if len(currentChunk)+len(word)+1 <= chunkSize {
-			if currentChunk != "" {
+		// Check if adding this word would exceed the target chunk size
+		if len(currentChunk) > 0 && len(currentChunk)+len(word)+1 > chunkSize && len(currentChunk) > 0 {
+			// Current chunk is full, add it to the list
+			chunks = append(chunks, currentChunk)
+			currentChunk = word
+		} else {
+			// Add word to current chunk with a space if needed
+			if len(currentChunk) > 0 {
 				currentChunk += " "
 			}
 			currentChunk += word
-		} else {
-			if currentChunk != "" {
-				chunks = append(chunks, currentChunk)
-			}
-			currentChunk = word
 		}
 	}
 
-	if currentChunk != "" {
+	// Add the last chunk if not empty
+	if len(currentChunk) > 0 {
 		chunks = append(chunks, currentChunk)
 	}
 
-	// Ensure we have at least 3 chunks for demonstration purposes
-	if len(chunks) < 3 && len(text) > 10 {
-		chunks = []string{
-			text[:len(text)/3],
-			text[len(text)/3 : 2*len(text)/3],
-			text[2*len(text)/3:],
-		}
+	// If we have very few chunks or they're very uneven, try a more balanced approach
+	if len(chunks) < 3 && len(text) > 15 {
+		// Find sentence boundaries or reasonable splitting points
+		return splitAtSentenceBoundaries(text, 3)
 	}
 
 	return chunks
+}
+
+// splitAtSentenceBoundaries tries to split text at sentence boundaries or punctuation
+// to create more natural chunks for streaming.
+func splitAtSentenceBoundaries(text string, targetChunks int) []string {
+	// Common sentence delimiters
+	delimiters := []string{". ", "! ", "? ", "\n\n", "; "}
+
+	// If text is small, don't try to split it too much
+	if len(text) < 30 {
+		return []string{text}
+	}
+
+	// Find all potential split points
+	var splitPoints []int
+	for _, delimiter := range delimiters {
+		idx := 0
+		for {
+			found := strings.Index(text[idx:], delimiter)
+			if found == -1 {
+				break
+			}
+			// Add the position after the delimiter
+			splitPoint := idx + found + len(delimiter)
+			splitPoints = append(splitPoints, splitPoint)
+			idx = splitPoint
+		}
+	}
+
+	// Sort split points
+	sort.Ints(splitPoints)
+
+	// If no good split points found, fall back to even division
+	if len(splitPoints) < targetChunks-1 {
+		chunkSize := len(text) / targetChunks
+		chunks := make([]string, targetChunks)
+		for i := 0; i < targetChunks-1; i++ {
+			chunks[i] = text[i*chunkSize : (i+1)*chunkSize]
+		}
+		chunks[targetChunks-1] = text[(targetChunks-1)*chunkSize:]
+		return chunks
+	}
+
+	// Select evenly spaced split points
+	selectedPoints := make([]int, targetChunks-1)
+	step := len(splitPoints) / targetChunks
+	for i := 0; i < targetChunks-1; i++ {
+		index := min((i+1)*step, len(splitPoints)-1)
+		selectedPoints[i] = splitPoints[index]
+	}
+	sort.Ints(selectedPoints)
+
+	// Create chunks based on selected split points
+	chunks := make([]string, targetChunks)
+	startIdx := 0
+	for i, point := range selectedPoints {
+		chunks[i] = text[startIdx:point]
+		startIdx = point
+	}
+	chunks[targetChunks-1] = text[startIdx:]
+
+	return chunks
+}
+
+// min returns the smaller of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // reverseString reverses a UTF-8 encoded string.
@@ -233,8 +373,13 @@ func main() {
 			{
 				ID:          "streaming_processor",
 				Name:        "Streaming Text Processor",
-				Description: stringPtr("Processes text data in chunks, demonstrating streaming capabilities"),
+				Description: stringPtr("Input: Any text\nOutput: Chunks of reversed text delivered incrementally\n\nExample input: hello world\nOutput chunk 1: oll\nOutput chunk 2: eh\nOutput chunk 3: dlrow"),
 				Tags:        []string{"text", "stream", "example"},
+				Examples: []string{
+					"The quick brown fox jumps over the lazy dog",
+					"Lorem ipsum dolor sit amet",
+					"This demonstrates streaming capabilities",
+				},
 				InputModes:  []string{string(protocol.PartTypeText)},
 				OutputModes: []string{string(protocol.PartTypeText)},
 			},

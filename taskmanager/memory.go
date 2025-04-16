@@ -87,7 +87,10 @@ func (m *MemoryTaskManager) processTaskWithProcessor(
 	// Delegate the actual processing to the injected processor
 	if err := m.Processor.Process(ctx, taskID, message, handle); err != nil {
 		log.Errorf("Processor failed for task %s: %v", taskID, err)
-		errMsg := &protocol.Message{Role: protocol.MessageRoleAgent, Parts: []protocol.Part{protocol.NewTextPart(err.Error())}}
+		errMsg := &protocol.Message{
+			Role:  protocol.MessageRoleAgent,
+			Parts: []protocol.Part{protocol.NewTextPart(err.Error())},
+		}
 		// Log update error while still handling the processor error
 		if updateErr := m.UpdateTaskStatus(taskID, protocol.TaskStateFailed, errMsg); updateErr != nil {
 			log.Errorf("Failed to update task %s status to failed: %v", taskID, updateErr)
@@ -120,7 +123,10 @@ func (m *MemoryTaskManager) startTaskSubscribe(
 			log.Errorf("Processor failed for task %s in subscribe: %v", taskID, err)
 			if ctx.Err() != context.Canceled {
 				// Only update to failed if not already cancelled
-				errMsg := &protocol.Message{Role: protocol.MessageRoleAgent, Parts: []protocol.Part{protocol.NewTextPart(err.Error())}}
+				errMsg := &protocol.Message{
+					Role:  protocol.MessageRoleAgent,
+					Parts: []protocol.Part{protocol.NewTextPart(err.Error())},
+				}
 				if updateErr := m.UpdateTaskStatus(taskID, protocol.TaskStateFailed, errMsg); updateErr != nil {
 					log.Errorf("Failed to update task %s status to failed: %v", taskID, updateErr)
 				}
