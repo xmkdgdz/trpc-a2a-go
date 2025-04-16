@@ -1,11 +1,12 @@
 module trpc.group/trpc-go/a2a-go/examples
 
-go 1.21.0
+go 1.23.0
 
 toolchain go1.23.7
 
 require (
 	github.com/google/uuid v1.3.1
+	golang.org/x/oauth2 v0.29.0
 	trpc.group/trpc-go/a2a-go v0.0.0
 )
 

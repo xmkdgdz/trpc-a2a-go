@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"trpc.group/trpc-go/a2a-go/auth"
 	"trpc.group/trpc-go/a2a-go/internal/sse"
 	"trpc.group/trpc-go/a2a-go/jsonrpc"
 	"trpc.group/trpc-go/a2a-go/log"
@@ -36,9 +37,10 @@ const (
 // A2AClient provides methods to interact with an A2A agent server.
 // It handles making HTTP requests and encoding/decoding JSON-RPC messages.
 type A2AClient struct {
-	baseURL    *url.URL     // Parsed base URL of the agent server.
-	httpClient *http.Client // Underlying HTTP client.
-	userAgent  string       // User-Agent header string.
+	baseURL      *url.URL            // Parsed base URL of the agent server.
+	httpClient   *http.Client        // Underlying HTTP client.
+	userAgent    string              // User-Agent header string.
+	authProvider auth.ClientProvider // Authentication provider.
 }
 
 // NewA2AClient creates a new A2A client targeting the specified agentURL.

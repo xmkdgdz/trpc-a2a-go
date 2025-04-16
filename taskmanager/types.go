@@ -117,6 +117,56 @@ type AuthenticationInfo struct {
 	Schemes []string `json:"schemes"`
 	// Credentials are the actual authentication credentials.
 	Credentials string `json:"credentials,omitempty"`
+	// OAuth2 contains OAuth2 specific authentication configuration.
+	OAuth2 *OAuth2AuthInfo `json:"oauth2,omitempty"`
+	// JWT contains JWT specific authentication configuration.
+	JWT *JWTAuthInfo `json:"jwt,omitempty"`
+	// APIKey contains API key specific authentication configuration.
+	APIKey *APIKeyAuthInfo `json:"apiKey,omitempty"`
+}
+
+// OAuth2AuthInfo contains OAuth2-specific authentication details.
+type OAuth2AuthInfo struct {
+	// ClientID is the OAuth2 client ID.
+	ClientID string `json:"clientId,omitempty"`
+	// ClientSecret is the OAuth2 client secret.
+	ClientSecret string `json:"clientSecret,omitempty"`
+	// TokenURL is the OAuth2 token endpoint.
+	TokenURL string `json:"tokenUrl,omitempty"`
+	// AuthURL is the OAuth2 authorization endpoint (for authorization code flow).
+	AuthURL string `json:"authUrl,omitempty"`
+	// Scopes is a list of OAuth2 scopes to request.
+	Scopes []string `json:"scopes,omitempty"`
+	// RefreshToken is the OAuth2 refresh token.
+	RefreshToken string `json:"refreshToken,omitempty"`
+	// AccessToken is the OAuth2 access token.
+	AccessToken string `json:"accessToken,omitempty"`
+}
+
+// JWTAuthInfo contains JWT-specific authentication details.
+type JWTAuthInfo struct {
+	// Token is a pre-generated JWT token.
+	Token string `json:"token,omitempty"`
+	// KeyID is the ID of the key used to sign the JWT.
+	KeyID string `json:"keyId,omitempty"`
+	// JWKSURL is the URL of the JWKS endpoint for key discovery.
+	JWKSURL string `json:"jwksUrl,omitempty"`
+	// Audience is the expected audience claim.
+	Audience string `json:"audience,omitempty"`
+	// Issuer is the expected issuer claim.
+	Issuer string `json:"issuer,omitempty"`
+}
+
+// APIKeyAuthInfo contains API key-specific authentication details.
+type APIKeyAuthInfo struct {
+	// Key is the API key value.
+	Key string `json:"key,omitempty"`
+	// HeaderName is the name of the header to include the API key in.
+	HeaderName string `json:"headerName,omitempty"`
+	// ParamName is the name of the query parameter to include the API key in.
+	ParamName string `json:"paramName,omitempty"`
+	// Location specifies where to place the API key (header, query, or cookie).
+	Location string `json:"location,omitempty"`
 }
 
 // PushNotificationConfig represents the configuration for task push notifications.
