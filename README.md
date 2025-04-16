@@ -1,5 +1,12 @@
 # A2A-Go
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/trpc-group/a2a-go.svg)](https://pkg.go.dev/github.com/trpc-group/a2a-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/trpc-group/a2a-go)](https://goreportcard.com/report/github.com/trpc-group/a2a-go)
+[![LICENSE](https://img.shields.io/badge/license-Apache--2.0-green.svg)](https://github.com/trpc-group/a2a-go/blob/main/LICENSE)
+[![Releases](https://img.shields.io/github/release/trpc-group/a2a-go.svg?style=flat-square)](https://github.com/trpc-group/a2a-go/releases)
+[![Tests](https://github.com/trpc-group/a2a-go/actions/workflows/prc.yml/badge.svg)](https://github.com/trpc-group/a2a-go/actions/workflows/prc.yml)
+[![Coverage](https://codecov.io/gh/trpc-group/a2a-go/branch/main/graph/badge.svg)](https://app.codecov.io/gh/trpc-group/a2a-go/tree/main)
+
 Go implementation of the A2A protocol, enabling different AI agents to discover and collaborate with each other.
 
 ## Core Components
