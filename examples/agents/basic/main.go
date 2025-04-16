@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"trpc.group/trpc-go/a2a-go/protocol"
 	"trpc.group/trpc-go/a2a-go/server"
 	"trpc.group/trpc-go/a2a-go/taskmanager"
 )
@@ -35,7 +36,7 @@ type basicTaskProcessor struct {
 func (p *basicTaskProcessor) Process(
 	ctx context.Context,
 	taskID string,
-	message taskmanager.Message,
+	message protocol.Message,
 	handle taskmanager.TaskHandle,
 ) error {
 	log.Printf("Processing task %s...", taskID)
@@ -46,19 +47,19 @@ func (p *basicTaskProcessor) Process(
 		errMsg := "input message must contain text"
 		log.Printf("Task %s failed: %s", taskID, errMsg)
 		// Update status to Failed via handle.
-		failedMessage := taskmanager.NewMessage(
-			taskmanager.MessageRoleAgent,
-			[]taskmanager.Part{taskmanager.NewTextPart(errMsg)}, // Use Part slice
+		failedMessage := protocol.NewMessage(
+			protocol.MessageRoleAgent,
+			[]protocol.Part{protocol.NewTextPart(errMsg)}, // Use Part slice
 		)
-		_ = handle.UpdateStatus(taskmanager.TaskStateFailed, &failedMessage) // Ignore error on final fail update
-		return fmt.Errorf(errMsg)                                            // Return the processing error
+		_ = handle.UpdateStatus(protocol.TaskStateFailed, &failedMessage) // Ignore error on final fail update
+		return fmt.Errorf(errMsg)                                         // Return the processing error
 	}
 
 	// Check for cancellation via context
 	if err := ctx.Err(); err != nil {
 		log.Printf("Task %s cancelled during processing: %v", taskID, err)
 		// Update status to Cancelled via handle.
-		_ = handle.UpdateStatus(taskmanager.TaskStateCanceled, nil)
+		_ = handle.UpdateStatus(protocol.TaskStateCanceled, nil)
 		return err // Return context error
 	}
 
@@ -67,22 +68,22 @@ func (p *basicTaskProcessor) Process(
 	log.Printf("Task %s processing complete. Result: %s", taskID, result)
 
 	// Create the response message part.
-	responseTextPart := taskmanager.NewTextPart(result)
+	responseTextPart := protocol.NewTextPart(result)
 
 	// Create the final completed task status including the response message.
-	finalStatusMsg := taskmanager.NewMessage(
-		taskmanager.MessageRoleAgent,
-		[]taskmanager.Part{responseTextPart}, // Use Part slice
+	finalStatusMsg := protocol.NewMessage(
+		protocol.MessageRoleAgent,
+		[]protocol.Part{responseTextPart}, // Use Part slice
 	)
-	finalStatusState := taskmanager.TaskStateCompleted
+	finalStatusState := protocol.TaskStateCompleted
 
 	// Create the result artifact.
-	artifact := taskmanager.Artifact{
+	artifact := protocol.Artifact{
 		Name:        stringPtr("Processed Text"),
 		Description: stringPtr("The result of processing the input text."),
 		Index:       0,
-		Parts:       []taskmanager.Part{responseTextPart}, // Use Part slice
-		LastChunk:   boolPtr(true),                        // Indicate this is the only/last chunk for this artifact.
+		Parts:       []protocol.Part{responseTextPart}, // Use Part slice
+		LastChunk:   boolPtr(true),                     // Indicate this is the only/last chunk for this artifact.
 	}
 
 	// Update the task state to completed via handle.
@@ -107,10 +108,10 @@ func (p *basicTaskProcessor) Process(
 }
 
 // extractText extracts the first text part from a message.
-func extractText(message taskmanager.Message) string {
+func extractText(message protocol.Message) string {
 	for _, part := range message.Parts {
 		// Type assert to the concrete TextPart type.
-		if p, ok := part.(taskmanager.TextPart); ok {
+		if p, ok := part.(protocol.TextPart); ok {
 			return p.Text
 		}
 	}
@@ -164,8 +165,8 @@ func main() {
 			StateTransitionHistory: true, // MemoryTaskManager stores history.
 		},
 		// Use PartTypeText constant from taskmanager package.
-		DefaultInputModes:  []string{string(taskmanager.PartTypeText)},
-		DefaultOutputModes: []string{string(taskmanager.PartTypeText)},
+		DefaultInputModes:  []string{string(protocol.PartTypeText)},
+		DefaultOutputModes: []string{string(protocol.PartTypeText)},
 		Skills: []server.AgentSkill{
 			{
 				ID:          "text_reverser",
@@ -173,8 +174,8 @@ func main() {
 				Description: stringPtr("Reverses the input text."),
 				Tags:        []string{"text", "reverse", "example"},
 				Examples:    []string{"reverse this text"},
-				InputModes:  []string{string(taskmanager.PartTypeText)},
-				OutputModes: []string{string(taskmanager.PartTypeText)},
+				InputModes:  []string{string(protocol.PartTypeText)},
+				OutputModes: []string{string(protocol.PartTypeText)},
 			},
 		},
 	}

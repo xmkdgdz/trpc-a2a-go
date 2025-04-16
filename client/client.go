@@ -26,7 +26,6 @@ import (
 	"trpc.group/trpc-go/a2a-go/jsonrpc"
 	"trpc.group/trpc-go/a2a-go/log"
 	"trpc.group/trpc-go/a2a-go/protocol"
-	"trpc.group/trpc-go/a2a-go/taskmanager"
 )
 
 const (
@@ -74,8 +73,8 @@ func NewA2AClient(agentURL string, opts ...Option) (*A2AClient, error) {
 // It returns the initial task state received from the agent.
 func (c *A2AClient) SendTasks(
 	ctx context.Context,
-	params taskmanager.SendTaskParams,
-) (*taskmanager.Task, error) {
+	params protocol.SendTaskParams,
+) (*protocol.Task, error) {
 	request := jsonrpc.NewRequest(protocol.MethodTasksSend, params.ID)
 	paramsBytes, err := json.Marshal(params)
 	if err != nil {
@@ -94,8 +93,8 @@ func (c *A2AClient) SendTasks(
 // GetTasks retrieves the status of a task using the tasks_get method.
 func (c *A2AClient) GetTasks(
 	ctx context.Context,
-	params taskmanager.TaskQueryParams,
-) (*taskmanager.Task, error) {
+	params protocol.TaskQueryParams,
+) (*protocol.Task, error) {
 	request := jsonrpc.NewRequest(protocol.MethodTasksGet, params.ID)
 	paramsBytes, err := json.Marshal(params)
 	if err != nil {
@@ -113,8 +112,8 @@ func (c *A2AClient) GetTasks(
 // It returns the task state immediately after the cancellation request.
 func (c *A2AClient) CancelTasks(
 	ctx context.Context,
-	params taskmanager.TaskIDParams,
-) (*taskmanager.Task, error) {
+	params protocol.TaskIDParams,
+) (*protocol.Task, error) {
 	request := jsonrpc.NewRequest(protocol.MethodTasksCancel, params.ID)
 	paramsBytes, err := json.Marshal(params)
 	if err != nil {
@@ -133,8 +132,8 @@ func (c *A2AClient) CancelTasks(
 // The returned channel will be closed when the stream ends (task completion, error, or context cancellation).
 func (c *A2AClient) StreamTask(
 	ctx context.Context,
-	params taskmanager.SendTaskParams,
-) (<-chan taskmanager.TaskEvent, error) {
+	params protocol.SendTaskParams,
+) (<-chan protocol.TaskEvent, error) {
 	// Create the JSON-RPC request.
 	request := jsonrpc.NewRequest(protocol.MethodTasksSendSubscribe, params.ID)
 	paramsBytes, err := json.Marshal(params)
@@ -190,7 +189,7 @@ func (c *A2AClient) StreamTask(
 	}
 	log.Debugf("A2A Client Stream Response <- Status: %d, ID: %v. Stream established.", resp.StatusCode, request.ID)
 	// Create the channel to send events back to the caller.
-	eventsChan := make(chan taskmanager.TaskEvent, 10) // Buffered channel.
+	eventsChan := make(chan protocol.TaskEvent, 10) // Buffered channel.
 	// Start a goroutine to read from the SSE stream.
 	go c.processSSEStream(ctx, resp, params.ID, eventsChan)
 	return eventsChan, nil
@@ -203,7 +202,7 @@ func (c *A2AClient) processSSEStream(
 	ctx context.Context,
 	resp *http.Response,
 	taskID string,
-	eventsChan chan<- taskmanager.TaskEvent,
+	eventsChan chan<- protocol.TaskEvent,
 ) {
 	// Ensure resources are cleaned up when the goroutine exits.
 	defer resp.Body.Close()
@@ -241,10 +240,10 @@ func (c *A2AClient) processSSEStream(
 				return // Exit immediately, do not process any more events
 			}
 			// Deserialize the event data based on the event type from SSE.
-			var taskEvent taskmanager.TaskEvent
+			var taskEvent protocol.TaskEvent
 			switch eventType {
 			case protocol.EventTaskStatusUpdate:
-				var statusEvent taskmanager.TaskStatusUpdateEvent
+				var statusEvent protocol.TaskStatusUpdateEvent
 				if err := json.Unmarshal(eventBytes, &statusEvent); err != nil {
 					log.Errorf(
 						"Error unmarshaling TaskStatusUpdateEvent for task %s: %v. Data: %s",
@@ -254,7 +253,7 @@ func (c *A2AClient) processSSEStream(
 				}
 				taskEvent = statusEvent
 			case protocol.EventTaskArtifactUpdate:
-				var artifactEvent taskmanager.TaskArtifactUpdateEvent
+				var artifactEvent protocol.TaskArtifactUpdateEvent
 				if err := json.Unmarshal(eventBytes, &artifactEvent); err != nil {
 					log.Errorf(
 						"Error unmarshaling TaskArtifactUpdateEvent for task %s: %v. Data: %s",
@@ -290,7 +289,7 @@ func (c *A2AClient) processSSEStream(
 func (c *A2AClient) doRequestAndDecodeTask(
 	ctx context.Context,
 	request *jsonrpc.Request,
-) (*taskmanager.Task, error) {
+) (*protocol.Task, error) {
 	// Perform the HTTP request and basic JSON unmarshaling into fullResponse.
 	fullResponse, err := c.doRequest(ctx, request)
 	if err != nil {
@@ -307,7 +306,7 @@ func (c *A2AClient) doRequestAndDecodeTask(
 		return nil, fmt.Errorf("rpc response missing required 'result' field for id %v", request.ID)
 	}
 	// Unmarshal the raw JSON 'result' field directly into the specific target structure provided by the caller.
-	task := &taskmanager.Task{}
+	task := &protocol.Task{}
 	if err := json.Unmarshal(fullResponse.Result, task); err != nil {
 		return nil, fmt.Errorf(
 			"failed to unmarshal rpc result: %w. Raw result: %s", err, string(fullResponse.Result),

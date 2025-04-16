@@ -19,9 +19,10 @@ import (
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
+
 	"trpc.group/trpc-go/a2a-go/auth"
 	"trpc.group/trpc-go/a2a-go/client"
-	"trpc.group/trpc-go/a2a-go/taskmanager"
+	"trpc.group/trpc-go/a2a-go/protocol"
 )
 
 func main() {
@@ -55,11 +56,11 @@ func main() {
 	}
 
 	// Create a simple task to test authentication
-	textPart := taskmanager.NewTextPart("Hello, this is an authenticated request")
-	message := taskmanager.NewMessage(taskmanager.MessageRoleUser, []taskmanager.Part{textPart})
+	textPart := protocol.NewTextPart("Hello, this is an authenticated request")
+	message := protocol.NewMessage(protocol.MessageRoleUser, []protocol.Part{textPart})
 
 	// Send the task
-	task, err := a2aClient.SendTasks(context.Background(), taskmanager.SendTaskParams{
+	task, err := a2aClient.SendTasks(context.Background(), protocol.SendTaskParams{
 		ID:      "auth-test-task",
 		Message: message,
 	})
@@ -71,7 +72,7 @@ func main() {
 	fmt.Printf("Task ID: %s, Status: %s\n", task.ID, task.Status.State)
 
 	// For demonstration purposes, get the task status
-	taskQuery := taskmanager.TaskQueryParams{
+	taskQuery := protocol.TaskQueryParams{
 		ID: task.ID,
 	}
 

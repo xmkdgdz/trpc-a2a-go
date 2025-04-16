@@ -23,13 +23,12 @@ import (
 	"trpc.group/trpc-go/a2a-go/auth"
 	"trpc.group/trpc-go/a2a-go/log"
 	"trpc.group/trpc-go/a2a-go/protocol"
-	"trpc.group/trpc-go/a2a-go/taskmanager"
 )
 
 // getPushNotificationConfig retrieves a push notification configuration for a task.
 func (m *TaskManager) getPushNotificationConfig(
 	ctx context.Context, taskID string,
-) (*taskmanager.PushNotificationConfig, error) {
+) (*protocol.PushNotificationConfig, error) {
 	key := pushNotificationPrefix + taskID
 	val, err := m.client.Get(ctx, key).Result()
 	if err != nil {
@@ -39,7 +38,7 @@ func (m *TaskManager) getPushNotificationConfig(
 		}
 		return nil, err
 	}
-	var config taskmanager.PushNotificationConfig
+	var config protocol.PushNotificationConfig
 	if err := json.Unmarshal([]byte(val), &config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal push notification config: %w", err)
 	}
@@ -48,7 +47,7 @@ func (m *TaskManager) getPushNotificationConfig(
 
 // sendPushNotification sends a notification to the registered webhook URL.
 func (m *TaskManager) sendPushNotification(
-	ctx context.Context, taskID string, event taskmanager.TaskEvent,
+	ctx context.Context, taskID string, event protocol.TaskEvent,
 ) error {
 	// Get the notification config.
 	config, err := m.getPushNotificationConfig(ctx, taskID)
@@ -62,9 +61,9 @@ func (m *TaskManager) sendPushNotification(
 
 	// Prepare the notification payload.
 	eventType := ""
-	if _, isStatus := event.(taskmanager.TaskStatusUpdateEvent); isStatus {
+	if _, isStatus := event.(protocol.TaskStatusUpdateEvent); isStatus {
 		eventType = protocol.EventTaskStatusUpdate
-	} else if _, isArtifact := event.(taskmanager.TaskArtifactUpdateEvent); isArtifact {
+	} else if _, isArtifact := event.(protocol.TaskArtifactUpdateEvent); isArtifact {
 		eventType = protocol.EventTaskArtifactUpdate
 	} else {
 		return fmt.Errorf("unsupported event type: %T", event)

@@ -278,7 +278,7 @@ func (s *A2AServer) unmarshalParams(params json.RawMessage, v interface{}) *json
 
 // handleTasksSend handles the tasks_send method.
 func (s *A2AServer) handleTasksSend(ctx context.Context, w http.ResponseWriter, request jsonrpc.Request) {
-	var params taskmanager.SendTaskParams
+	var params protocol.SendTaskParams
 	if err := s.unmarshalParams(request.Params, &params); err != nil {
 		s.writeJSONRPCError(w, request.ID, err)
 		return
@@ -302,7 +302,7 @@ func (s *A2AServer) handleTasksSend(ctx context.Context, w http.ResponseWriter, 
 
 // handleTasksGet handles the tasks_get method.
 func (s *A2AServer) handleTasksGet(ctx context.Context, w http.ResponseWriter, request jsonrpc.Request) {
-	var params taskmanager.TaskQueryParams
+	var params protocol.TaskQueryParams
 	if err := s.unmarshalParams(request.Params, &params); err != nil {
 		s.writeJSONRPCError(w, request.ID, err)
 		return
@@ -326,7 +326,7 @@ func (s *A2AServer) handleTasksGet(ctx context.Context, w http.ResponseWriter, r
 
 // handleTasksCancel handles the tasks_cancel method.
 func (s *A2AServer) handleTasksCancel(ctx context.Context, w http.ResponseWriter, request jsonrpc.Request) {
-	var params taskmanager.TaskIDParams
+	var params protocol.TaskIDParams
 	if err := s.unmarshalParams(request.Params, &params); err != nil {
 		s.writeJSONRPCError(w, request.ID, err)
 		return
@@ -352,7 +352,7 @@ func (s *A2AServer) handleSSEStream(
 	ctx context.Context,
 	w http.ResponseWriter,
 	flusher http.Flusher,
-	eventsChan <-chan taskmanager.TaskEvent,
+	eventsChan <-chan protocol.TaskEvent,
 	taskID string,
 	requestID interface{},
 	isResubscribe bool,
@@ -402,9 +402,9 @@ func (s *A2AServer) handleSSEStream(
 			// Determine event type string for SSE.
 			var eventType string
 			switch event.(type) {
-			case taskmanager.TaskStatusUpdateEvent:
+			case protocol.TaskStatusUpdateEvent:
 				eventType = protocol.EventTaskStatusUpdate
-			case taskmanager.TaskArtifactUpdateEvent:
+			case protocol.TaskArtifactUpdateEvent:
 				eventType = protocol.EventTaskArtifactUpdate
 			default:
 				log.Warnf("Unknown event type received for task %s: %T. Skipping.", taskID, event)
@@ -430,7 +430,7 @@ func (s *A2AServer) handleSSEStream(
 
 // handleTasksSendSubscribe handles the tasks_sendSubscribe method using Server-Sent Events (SSE).
 func (s *A2AServer) handleTasksSendSubscribe(ctx context.Context, w http.ResponseWriter, request jsonrpc.Request) {
-	var params taskmanager.SendTaskParams
+	var params protocol.SendTaskParams
 	if err := s.unmarshalParams(request.Params, &params); err != nil {
 		s.writeJSONRPCError(w, request.ID, err)
 		return
@@ -527,7 +527,7 @@ func (s *A2AServer) handleTasksPushNotificationSet(
 	w http.ResponseWriter,
 	request jsonrpc.Request,
 ) {
-	var params taskmanager.TaskPushNotificationConfig
+	var params protocol.TaskPushNotificationConfig
 	if err := s.unmarshalParams(request.Params, &params); err != nil {
 		s.writeJSONRPCError(w, request.ID, err)
 		return
@@ -545,7 +545,7 @@ func (s *A2AServer) handleTasksPushNotificationSet(
 	if s.jwksEnabled && s.pushAuth != nil {
 		// Add JWT support by indicating the auth scheme in the config.
 		if params.PushNotificationConfig.Authentication == nil {
-			params.PushNotificationConfig.Authentication = &taskmanager.AuthenticationInfo{
+			params.PushNotificationConfig.Authentication = &protocol.AuthenticationInfo{
 				Schemes: []string{"bearer"},
 			}
 		} else {
@@ -619,7 +619,7 @@ func (s *A2AServer) handleTasksPushNotificationGet(
 	w http.ResponseWriter,
 	request jsonrpc.Request,
 ) {
-	var params taskmanager.TaskIDParams
+	var params protocol.TaskIDParams
 	if err := s.unmarshalParams(request.Params, &params); err != nil {
 		s.writeJSONRPCError(w, request.ID, err)
 		return
@@ -649,7 +649,7 @@ func (s *A2AServer) handleTasksPushNotificationGet(
 }
 
 func (s *A2AServer) handleTasksResubscribe(ctx context.Context, w http.ResponseWriter, request jsonrpc.Request) {
-	var params taskmanager.TaskIDParams
+	var params protocol.TaskIDParams
 	if err := s.unmarshalParams(request.Params, &params); err != nil {
 		s.writeJSONRPCError(w, request.ID, err)
 		return

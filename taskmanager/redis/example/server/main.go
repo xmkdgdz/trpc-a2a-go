@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"trpc.group/trpc-go/a2a-go/protocol"
 	"trpc.group/trpc-go/a2a-go/server"
 	"trpc.group/trpc-go/a2a-go/taskmanager"
 	redismgr "trpc.group/trpc-go/a2a-go/taskmanager/redis"
@@ -31,18 +33,18 @@ type DemoTaskProcessor struct{}
 func (p *DemoTaskProcessor) Process(
 	ctx context.Context,
 	taskID string,
-	initialMsg taskmanager.Message,
+	initialMsg protocol.Message,
 	handle taskmanager.TaskHandle,
 ) error {
 	// First, update the status to show we're working
-	if err := handle.UpdateStatus(taskmanager.TaskStateWorking, nil); err != nil {
+	if err := handle.UpdateStatus(protocol.TaskStateWorking, nil); err != nil {
 		return fmt.Errorf("failed to update status to working: %w", err)
 	}
 
 	// Extract the user message
 	var userMessage string
 	if len(initialMsg.Parts) > 0 {
-		if textPart, ok := initialMsg.Parts[0].(taskmanager.TextPart); ok {
+		if textPart, ok := initialMsg.Parts[0].(protocol.TextPart); ok {
 			userMessage = textPart.Text
 		}
 	}
@@ -65,9 +67,9 @@ func (p *DemoTaskProcessor) Process(
 	}
 
 	// Add an artifact
-	artifact := taskmanager.Artifact{
+	artifact := protocol.Artifact{
 		Name:  strPtr("result"),
-		Parts: []taskmanager.Part{taskmanager.NewTextPart(response)},
+		Parts: []protocol.Part{protocol.NewTextPart(response)},
 		Index: 0,
 	}
 	lastChunk := true
@@ -78,13 +80,13 @@ func (p *DemoTaskProcessor) Process(
 	}
 
 	// Complete with a success message
-	successMsg := &taskmanager.Message{
-		Role: taskmanager.MessageRoleAgent,
-		Parts: []taskmanager.Part{
-			taskmanager.NewTextPart(fmt.Sprintf("Task completed: %s", userMessage)),
+	successMsg := &protocol.Message{
+		Role: protocol.MessageRoleAgent,
+		Parts: []protocol.Part{
+			protocol.NewTextPart(fmt.Sprintf("Task completed: %s", userMessage)),
 		},
 	}
-	if err := handle.UpdateStatus(taskmanager.TaskStateCompleted, successMsg); err != nil {
+	if err := handle.UpdateStatus(protocol.TaskStateCompleted, successMsg); err != nil {
 		return fmt.Errorf("failed to update final status: %w", err)
 	}
 
@@ -142,8 +144,8 @@ func main() {
 			PushNotifications:      false,
 			StateTransitionHistory: true,
 		},
-		DefaultInputModes:  []string{string(taskmanager.PartTypeText)},
-		DefaultOutputModes: []string{string(taskmanager.PartTypeText)},
+		DefaultInputModes:  []string{string(protocol.PartTypeText)},
+		DefaultOutputModes: []string{string(protocol.PartTypeText)},
 		Skills:             []server.AgentSkill{}, // No specific skills
 	}
 

@@ -23,8 +23,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"trpc.group/trpc-go/a2a-go/client"
-	"trpc.group/trpc-go/a2a-go/taskmanager"
+	"trpc.group/trpc-go/a2a-go/protocol"
 )
 
 // Config holds the application configuration.
@@ -136,13 +137,13 @@ func generateTaskID() string {
 }
 
 // createTaskParams creates the parameters for sending a task.
-func createTaskParams(taskID, sessionID, input string) taskmanager.SendTaskParams {
-	message := taskmanager.NewMessage(
-		taskmanager.MessageRoleUser,
-		[]taskmanager.Part{taskmanager.NewTextPart(input)},
+func createTaskParams(taskID, sessionID, input string) protocol.SendTaskParams {
+	message := protocol.NewMessage(
+		protocol.MessageRoleUser,
+		[]protocol.Part{protocol.NewTextPart(input)},
 	)
 
-	return taskmanager.SendTaskParams{
+	return protocol.SendTaskParams{
 		ID:        taskID,
 		SessionID: &sessionID,
 		Message:   message,
@@ -152,7 +153,7 @@ func createTaskParams(taskID, sessionID, input string) taskmanager.SendTaskParam
 // handleAgentInteraction sends a request to the agent and processes the response.
 func handleAgentInteraction(
 	a2aClient *client.A2AClient,
-	params taskmanager.SendTaskParams,
+	params protocol.SendTaskParams,
 	taskID string,
 	config Config,
 ) {
@@ -181,13 +182,13 @@ func handleAgentInteraction(
 
 // processStreamResponse processes the stream of events from the agent.
 func processStreamResponse(
-	ctx context.Context, eventChan <-chan taskmanager.TaskEvent,
-) (taskmanager.TaskState, []taskmanager.Artifact) {
+	ctx context.Context, eventChan <-chan protocol.TaskEvent,
+) (protocol.TaskState, []protocol.Artifact) {
 	fmt.Println("\n<< Agent Response Stream:")
 	fmt.Println(strings.Repeat("-", 10))
 
-	var finalTaskState taskmanager.TaskState
-	finalArtifacts := []taskmanager.Artifact{}
+	var finalTaskState protocol.TaskState
+	finalArtifacts := []protocol.Artifact{}
 	streamEnded := false
 
 streamLoop:
@@ -215,12 +216,12 @@ streamLoop:
 
 // processEvent processes a single event from the stream.
 func processEvent(
-	event taskmanager.TaskEvent, finalArtifacts []taskmanager.Artifact,
-) (taskmanager.TaskState, []taskmanager.Artifact) {
-	var finalTaskState taskmanager.TaskState
+	event protocol.TaskEvent, finalArtifacts []protocol.Artifact,
+) (protocol.TaskState, []protocol.Artifact) {
+	var finalTaskState protocol.TaskState
 
 	switch e := event.(type) {
-	case taskmanager.TaskStatusUpdateEvent:
+	case protocol.TaskStatusUpdateEvent:
 		fmt.Printf("  [Status Update: %s (%s)]\n", e.Status.State, formatTimestamp(e.Status.Timestamp))
 		if e.Status.Message != nil {
 			printMessage(*e.Status.Message)
@@ -228,7 +229,7 @@ func processEvent(
 		if e.IsFinal() {
 			finalTaskState = e.Status.State
 		}
-	case taskmanager.TaskArtifactUpdateEvent:
+	case protocol.TaskArtifactUpdateEvent:
 		name := fmt.Sprintf("Artifact #%d", len(finalArtifacts)+1)
 		if e.Artifact.Name != nil {
 			name = *e.Artifact.Name
@@ -248,13 +249,13 @@ func getFinalTaskState(
 	a2aClient *client.A2AClient,
 	taskID string,
 	timeout time.Duration,
-	streamState taskmanager.TaskState,
-	streamArtifacts []taskmanager.Artifact,
+	streamState protocol.TaskState,
+	streamArtifacts []protocol.Artifact,
 ) {
 	finalCtx, finalCancel := context.WithTimeout(context.Background(), timeout)
 	defer finalCancel()
 
-	finalTask, getErr := a2aClient.GetTasks(finalCtx, taskmanager.TaskQueryParams{ID: taskID})
+	finalTask, getErr := a2aClient.GetTasks(finalCtx, protocol.TaskQueryParams{ID: taskID})
 
 	fmt.Println(strings.Repeat("-", 10))
 	fmt.Println("<< Final Result (from GetTask):")
@@ -275,7 +276,7 @@ func getFinalTaskState(
 }
 
 // displayFinalTaskState displays the final state of a task.
-func displayFinalTaskState(task *taskmanager.Task) {
+func displayFinalTaskState(task *protocol.Task) {
 	fmt.Printf("  State: %s (%s)\n", task.Status.State, formatTimestamp(task.Status.Timestamp))
 
 	if task.Status.Message != nil {
@@ -297,12 +298,12 @@ func displayFinalTaskState(task *taskmanager.Task) {
 }
 
 // printMessage prints the parts contained within a message.
-func printMessage(message taskmanager.Message) {
+func printMessage(message protocol.Message) {
 	printParts(message.Parts)
 }
 
 // printParts iterates through and prints different message/artifact part types.
-func printParts(parts []taskmanager.Part) {
+func printParts(parts []protocol.Part) {
 	for _, part := range parts {
 		printPart(part)
 	}
@@ -315,11 +316,11 @@ func printPart(part interface{}) {
 
 	// Handle direct types from taskmanager first (preferred).
 	switch p := part.(type) {
-	case taskmanager.TextPart:
+	case protocol.TextPart:
 		fmt.Println(indent + p.Text)
-	case taskmanager.FilePart:
+	case protocol.FilePart:
 		printFilePart(p, indent)
-	case taskmanager.DataPart:
+	case protocol.DataPart:
 		printDataPart(p, indent)
 	case map[string]interface{}:
 		printMapPart(p, indent)
@@ -329,7 +330,7 @@ func printPart(part interface{}) {
 }
 
 // printFilePart prints a file part.
-func printFilePart(p taskmanager.FilePart, indent string) {
+func printFilePart(p protocol.FilePart, indent string) {
 	name := "(unnamed file)"
 	if p.File.Name != nil {
 		name = *p.File.Name
@@ -348,7 +349,7 @@ func printFilePart(p taskmanager.FilePart, indent string) {
 }
 
 // printDataPart prints a data part.
-func printDataPart(p taskmanager.DataPart, indent string) {
+func printDataPart(p protocol.DataPart, indent string) {
 	fmt.Printf("%s[Structured Data]\n", indent)
 	dataContent, err := json.MarshalIndent(p.Data, indent, "  ")
 	if err == nil {
@@ -363,11 +364,11 @@ func printDataPart(p taskmanager.DataPart, indent string) {
 func printMapPart(p map[string]interface{}, indent string) {
 	if typeStr, ok := p["type"].(string); ok {
 		switch typeStr {
-		case string(taskmanager.PartTypeText):
+		case string(protocol.PartTypeText):
 			if text, ok := p["text"].(string); ok {
 				fmt.Println(indent + text)
 			}
-		case string(taskmanager.PartTypeFile):
+		case string(protocol.PartTypeFile):
 			fmt.Printf("%s[File (from map)]\n", indent)
 			fileData, err := json.MarshalIndent(p["file"], indent, "  ")
 			if err == nil {
@@ -375,7 +376,7 @@ func printMapPart(p map[string]interface{}, indent string) {
 			} else if p["file"] != nil {
 				fmt.Printf("%s  %+v\n", indent, p["file"])
 			}
-		case string(taskmanager.PartTypeData):
+		case string(protocol.PartTypeData):
 			fmt.Printf("%s[Structured Data (from map)]\n", indent)
 			dataContent, err := json.MarshalIndent(p["data"], indent, "  ")
 			if err == nil {

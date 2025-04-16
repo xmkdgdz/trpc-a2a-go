@@ -7,7 +7,7 @@
 // please note that tRPC source code is licensed under the  Apache 2.0 License,
 // A copy of the Apache 2.0 License is included in this file.
 
-package taskmanager
+package protocol
 
 import (
 	"encoding/json"

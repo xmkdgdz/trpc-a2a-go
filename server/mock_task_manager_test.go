@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"trpc.group/trpc-go/a2a-go/jsonrpc"
+	"trpc.group/trpc-go/a2a-go/protocol"
 	"trpc.group/trpc-go/a2a-go/taskmanager"
 )
 
@@ -27,37 +28,37 @@ func getCurrentTimestamp() string {
 type mockTaskManager struct {
 	mu sync.Mutex
 	// Store tasks for basic Get/Cancel simulation
-	tasks map[string]*taskmanager.Task
+	tasks map[string]*protocol.Task
 
 	// Configure responses/behavior for testing
-	SendResponse    *taskmanager.Task
+	SendResponse    *protocol.Task
 	SendError       error
-	GetResponse     *taskmanager.Task
+	GetResponse     *protocol.Task
 	GetError        error
-	CancelResponse  *taskmanager.Task
+	CancelResponse  *protocol.Task
 	CancelError     error
-	SubscribeEvents []taskmanager.TaskEvent // Events to send for subscription
+	SubscribeEvents []protocol.TaskEvent // Events to send for subscription
 	SubscribeError  error
 
 	// Push notification fields
-	pushNotificationSetResponse *taskmanager.TaskPushNotificationConfig
+	pushNotificationSetResponse *protocol.TaskPushNotificationConfig
 	pushNotificationSetError    error
-	pushNotificationGetResponse *taskmanager.TaskPushNotificationConfig
+	pushNotificationGetResponse *protocol.TaskPushNotificationConfig
 	pushNotificationGetError    error
 }
 
 // newMockTaskManager creates a new mockTaskManager for testing.
 func newMockTaskManager() *mockTaskManager {
 	return &mockTaskManager{
-		tasks: make(map[string]*taskmanager.Task),
+		tasks: make(map[string]*protocol.Task),
 	}
 }
 
 // OnSendTask implements the TaskManager interface.
 func (m *mockTaskManager) OnSendTask(
 	ctx context.Context,
-	params taskmanager.SendTaskParams,
-) (*taskmanager.Task, error) {
+	params protocol.SendTaskParams,
+) (*protocol.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -83,10 +84,10 @@ func (m *mockTaskManager) OnSendTask(
 	}
 
 	// Default behavior: create a simple task
-	task := taskmanager.NewTask(params.ID, params.SessionID)
+	task := protocol.NewTask(params.ID, params.SessionID)
 	now := getCurrentTimestamp()
-	task.Status = taskmanager.TaskStatus{
-		State:     taskmanager.TaskStateSubmitted,
+	task.Status = protocol.TaskStatus{
+		State:     protocol.TaskStateSubmitted,
 		Timestamp: now,
 	}
 
@@ -97,8 +98,8 @@ func (m *mockTaskManager) OnSendTask(
 
 // OnGetTask implements the TaskManager interface.
 func (m *mockTaskManager) OnGetTask(
-	ctx context.Context, params taskmanager.TaskQueryParams,
-) (*taskmanager.Task, error) {
+	ctx context.Context, params protocol.TaskQueryParams,
+) (*protocol.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -120,8 +121,8 @@ func (m *mockTaskManager) OnGetTask(
 
 // OnCancelTask implements the TaskManager interface.
 func (m *mockTaskManager) OnCancelTask(
-	ctx context.Context, params taskmanager.TaskIDParams,
-) (*taskmanager.Task, error) {
+	ctx context.Context, params protocol.TaskIDParams,
+) (*protocol.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -140,15 +141,15 @@ func (m *mockTaskManager) OnCancelTask(
 	}
 
 	// Update task status to canceled
-	task.Status.State = taskmanager.TaskStateCanceled
+	task.Status.State = protocol.TaskStateCanceled
 	task.Status.Timestamp = getCurrentTimestamp()
 	return task, nil
 }
 
 // OnSendTaskSubscribe implements the TaskManager interface.
 func (m *mockTaskManager) OnSendTaskSubscribe(
-	ctx context.Context, params taskmanager.SendTaskParams,
-) (<-chan taskmanager.TaskEvent, error) {
+	ctx context.Context, params protocol.SendTaskParams,
+) (<-chan protocol.TaskEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -157,9 +158,9 @@ func (m *mockTaskManager) OnSendTaskSubscribe(
 	}
 
 	// Create a task like OnSendTask would
-	task := taskmanager.NewTask(params.ID, params.SessionID)
-	task.Status = taskmanager.TaskStatus{
-		State:     taskmanager.TaskStateSubmitted,
+	task := protocol.NewTask(params.ID, params.SessionID)
+	task.Status = protocol.TaskStatus{
+		State:     protocol.TaskStateSubmitted,
 		Timestamp: getCurrentTimestamp(),
 	}
 
@@ -167,7 +168,7 @@ func (m *mockTaskManager) OnSendTaskSubscribe(
 	m.tasks[task.ID] = task
 
 	// Create a channel and send events
-	eventCh := make(chan taskmanager.TaskEvent, len(m.SubscribeEvents)+1)
+	eventCh := make(chan protocol.TaskEvent, len(m.SubscribeEvents)+1)
 
 	// Send configured events in background
 	if len(m.SubscribeEvents) > 0 {
@@ -192,20 +193,20 @@ func (m *mockTaskManager) OnSendTaskSubscribe(
 		// No events configured, send a default working and completed status
 		go func() {
 			// Working status
-			workingEvent := taskmanager.TaskStatusUpdateEvent{
+			workingEvent := protocol.TaskStatusUpdateEvent{
 				ID: params.ID,
-				Status: taskmanager.TaskStatus{
-					State:     taskmanager.TaskStateWorking,
+				Status: protocol.TaskStatus{
+					State:     protocol.TaskStateWorking,
 					Timestamp: getCurrentTimestamp(),
 				},
 				Final: false,
 			}
 
 			// Completed status
-			completedEvent := taskmanager.TaskStatusUpdateEvent{
+			completedEvent := protocol.TaskStatusUpdateEvent{
 				ID: params.ID,
-				Status: taskmanager.TaskStatus{
-					State:     taskmanager.TaskStateCompleted,
+				Status: protocol.TaskStatus{
+					State:     protocol.TaskStateCompleted,
 					Timestamp: getCurrentTimestamp(),
 				},
 				Final: true,
@@ -235,8 +236,8 @@ func (m *mockTaskManager) OnSendTaskSubscribe(
 
 // OnPushNotificationSet implements the TaskManager interface for push notifications.
 func (m *mockTaskManager) OnPushNotificationSet(
-	ctx context.Context, params taskmanager.TaskPushNotificationConfig,
-) (*taskmanager.TaskPushNotificationConfig, error) {
+	ctx context.Context, params protocol.TaskPushNotificationConfig,
+) (*protocol.TaskPushNotificationConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -249,7 +250,7 @@ func (m *mockTaskManager) OnPushNotificationSet(
 	}
 
 	// Default implementation if response not configured
-	return &taskmanager.TaskPushNotificationConfig{
+	return &protocol.TaskPushNotificationConfig{
 		ID:                     params.ID,
 		PushNotificationConfig: params.PushNotificationConfig,
 	}, nil
@@ -257,8 +258,8 @@ func (m *mockTaskManager) OnPushNotificationSet(
 
 // OnPushNotificationGet implements the TaskManager interface for push notifications.
 func (m *mockTaskManager) OnPushNotificationGet(
-	ctx context.Context, params taskmanager.TaskIDParams,
-) (*taskmanager.TaskPushNotificationConfig, error) {
+	ctx context.Context, params protocol.TaskIDParams,
+) (*protocol.TaskPushNotificationConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -276,8 +277,8 @@ func (m *mockTaskManager) OnPushNotificationGet(
 
 // OnResubscribe implements the TaskManager interface for resubscribing to task events.
 func (m *mockTaskManager) OnResubscribe(
-	ctx context.Context, params taskmanager.TaskIDParams,
-) (<-chan taskmanager.TaskEvent, error) {
+	ctx context.Context, params protocol.TaskIDParams,
+) (<-chan protocol.TaskEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -292,7 +293,7 @@ func (m *mockTaskManager) OnResubscribe(
 	}
 
 	// Create a channel and send events
-	eventCh := make(chan taskmanager.TaskEvent, len(m.SubscribeEvents)+1)
+	eventCh := make(chan protocol.TaskEvent, len(m.SubscribeEvents)+1)
 
 	// Send configured events in background
 	if len(m.SubscribeEvents) > 0 {
@@ -316,10 +317,10 @@ func (m *mockTaskManager) OnResubscribe(
 	} else {
 		// No events configured, send a default completed status
 		go func() {
-			completedEvent := taskmanager.TaskStatusUpdateEvent{
+			completedEvent := protocol.TaskStatusUpdateEvent{
 				ID: params.ID,
-				Status: taskmanager.TaskStatus{
-					State:     taskmanager.TaskStateCompleted,
+				Status: protocol.TaskStatus{
+					State:     protocol.TaskStateCompleted,
 					Timestamp: getCurrentTimestamp(),
 				},
 				Final: true,
@@ -341,8 +342,8 @@ func (m *mockTaskManager) OnResubscribe(
 
 // ProcessTask is a helper method for tests that need to process a task directly.
 func (m *mockTaskManager) ProcessTask(
-	ctx context.Context, taskID string, msg taskmanager.Message,
-) (*taskmanager.Task, error) {
+	ctx context.Context, taskID string, msg protocol.Message,
+) (*protocol.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -353,12 +354,12 @@ func (m *mockTaskManager) ProcessTask(
 	}
 
 	// Update task status to working
-	task.Status.State = taskmanager.TaskStateWorking
+	task.Status.State = protocol.TaskStateWorking
 	task.Status.Timestamp = getCurrentTimestamp()
 
 	// Add message to history if it exists
 	if task.History == nil {
-		task.History = make([]taskmanager.Message, 0)
+		task.History = make([]protocol.Message, 0)
 	}
 	task.History = append(task.History, msg)
 

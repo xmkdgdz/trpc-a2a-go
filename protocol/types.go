@@ -9,7 +9,7 @@
 
 // Package taskmanager handles the lifecycle and state of A2A tasks,
 // defining the core types and interfaces based on the A2A specification.
-package taskmanager
+package protocol
 
 import (
 	"encoding/json"
@@ -462,10 +462,4 @@ func NewTextPart(text string) TextPart {
 		Type: PartTypeText,
 		Text: text,
 	}
-}
-
-// isFinalState checks if a TaskState represents a terminal state.
-// Not exported as it's an internal helper.
-func isFinalState(state TaskState) bool {
-	return state == TaskStateCompleted || state == TaskStateFailed || state == TaskStateCanceled
 }
