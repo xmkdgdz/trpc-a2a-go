@@ -383,3 +383,84 @@ func (c *A2AClient) doRequest(
 	}
 	return response, nil
 }
+
+// SetPushNotification configures push notifications for a task.
+// It allows specifying a callback URL where task status updates will be sent.
+func (c *A2AClient) SetPushNotification(
+	ctx context.Context,
+	params protocol.TaskPushNotificationConfig,
+) (*protocol.TaskPushNotificationConfig, error) {
+	request := jsonrpc.NewRequest(protocol.MethodTasksPushNotificationSet, params.ID)
+	paramsBytes, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("a2aClient.SetPushNotification: failed to marshal params: %w", err)
+	}
+	request.Params = paramsBytes
+
+	// Perform the HTTP request and basic JSON unmarshaling
+	fullResponse, err := c.doRequest(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("a2aClient.SetPushNotification: %w", err)
+	}
+
+	// Check for JSON-RPC level error included in the response
+	if fullResponse.Error != nil {
+		return nil, fullResponse.Error
+	}
+
+	// Check if the result field is missing
+	if len(fullResponse.Result) == 0 {
+		return nil, fmt.Errorf("rpc response missing required 'result' field for id %v", request.ID)
+	}
+
+	// Unmarshal the result into a TaskPushNotificationConfig
+	config := &protocol.TaskPushNotificationConfig{}
+	if err := json.Unmarshal(fullResponse.Result, config); err != nil {
+		return nil, fmt.Errorf(
+			"failed to unmarshal push notification config: %w. Raw result: %s",
+			err, string(fullResponse.Result),
+		)
+	}
+
+	return config, nil
+}
+
+// GetPushNotification retrieves the push notification configuration for a task.
+func (c *A2AClient) GetPushNotification(
+	ctx context.Context,
+	params protocol.TaskIDParams,
+) (*protocol.TaskPushNotificationConfig, error) {
+	request := jsonrpc.NewRequest(protocol.MethodTasksPushNotificationGet, params.ID)
+	paramsBytes, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("a2aClient.GetPushNotification: failed to marshal params: %w", err)
+	}
+	request.Params = paramsBytes
+
+	// Perform the HTTP request and basic JSON unmarshaling
+	fullResponse, err := c.doRequest(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("a2aClient.GetPushNotification: %w", err)
+	}
+
+	// Check for JSON-RPC level error included in the response
+	if fullResponse.Error != nil {
+		return nil, fullResponse.Error
+	}
+
+	// Check if the result field is missing
+	if len(fullResponse.Result) == 0 {
+		return nil, fmt.Errorf("rpc response missing required 'result' field for id %v", request.ID)
+	}
+
+	// Unmarshal the result into a TaskPushNotificationConfig
+	config := &protocol.TaskPushNotificationConfig{}
+	if err := json.Unmarshal(fullResponse.Result, config); err != nil {
+		return nil, fmt.Errorf(
+			"failed to unmarshal push notification config: %w. Raw result: %s",
+			err, string(fullResponse.Result),
+		)
+	}
+
+	return config, nil
+}

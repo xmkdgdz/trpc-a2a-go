@@ -35,6 +35,8 @@ type Config struct {
 	SessionID        string
 	UseTasksGet      bool
 	HistoryLength    int
+	ServerPort       int
+	ServerHost       string
 }
 
 // Command types for CLI
@@ -48,7 +50,11 @@ const (
 	cmdCard    = "card"
 	cmdPush    = "push"
 	cmdGetPush = "getpush"
+	cmdServer  = "server"
 )
+
+// Global variable to track the push notification server
+var pushServer *http.Server
 
 func main() {
 	// Parse command-line flags.
@@ -86,6 +92,8 @@ func parseFlags() Config {
 	flag.StringVar(&config.SessionID, "session", "", "Use specific session ID (empty = generate new)")
 	flag.BoolVar(&config.UseTasksGet, "use-tasks-get", true, "Use tasks/get to fetch final state")
 	flag.IntVar(&config.HistoryLength, "history", 0, "Number of history messages to request (0 = none)")
+	flag.IntVar(&config.ServerPort, "port", 8090, "Port for push notification server")
+	flag.StringVar(&config.ServerHost, "host", "localhost", "Host for push notification server")
 	flag.Parse()
 
 	// Generate a session ID if not provided
@@ -282,6 +290,10 @@ func processCommand(
 
 	switch cmd {
 	case cmdExit:
+		// Stop the push server if it's running
+		if pushServer != nil {
+			stopPushServer()
+		}
 		fmt.Println("Exiting.")
 		os.Exit(0)
 		return true
@@ -383,11 +395,7 @@ func processCommand(
 			token = &tokenStr
 		}
 
-		fmt.Println("The push notification feature is not implemented in this example.")
-		fmt.Printf("Would set push notification for task %s to URL %s\n", taskID, callbackURL)
-		if token != nil {
-			fmt.Printf("With token: %s\n", *token)
-		}
+		setPushNotification(a2aClient, taskID, callbackURL, token, config.Timeout)
 		return true
 
 	case cmdGetPush:
@@ -396,13 +404,33 @@ func processCommand(
 			return true
 		}
 
-		fmt.Println("The push notification feature is not implemented in this example.")
-		fmt.Printf("Would get push notification configuration for task %s\n", parts[1])
+		getPushNotification(a2aClient, parts[1], config.Timeout)
 		return true
 
 	case "new":
 		// Force start a new task (ignore current input-required state)
 		fmt.Println("Starting a new task on next input.")
+		return true
+
+	case cmdServer:
+		if len(parts) > 1 && parts[1] == "start" {
+			// Start the push notification server
+			if err := startPushServer(*config); err != nil {
+				fmt.Printf("Failed to start server: %v\n", err)
+			} else {
+				// Display the server URL for convenience
+				fmt.Printf("Push notification server started at http://%s:%d/push\n",
+					config.ServerHost, config.ServerPort)
+				fmt.Println("Use this URL for push notifications.")
+			}
+		} else if len(parts) > 1 && parts[1] == "stop" {
+			// Stop the push notification server
+			if err := stopPushServer(); err != nil {
+				fmt.Printf("Failed to stop server: %v\n", err)
+			}
+		} else {
+			fmt.Println("Usage: server start|stop")
+		}
 		return true
 	}
 
@@ -429,6 +457,8 @@ func displayHelpMessage() {
 	fmt.Println("  card                     - Fetch and display the agent's capabilities card")
 	fmt.Println("  push <task-id> <url> [token] - Set push notification for a task")
 	fmt.Println("  getpush <task-id>        - Get push notification configuration for a task")
+	fmt.Println("  server start             - Start push notification server")
+	fmt.Println("  server stop              - Stop push notification server")
 	fmt.Println("  new                      - Start a new task (ignore current input-required state)")
 	fmt.Println("")
 	fmt.Println("For normal interaction, just type your message and press Enter.")
@@ -943,4 +973,234 @@ func formatTimestamp(ts string) string {
 		return ts
 	}
 	return t.Local().Format(time.Stamp)
+}
+
+// PushNotificationHandler handles incoming push notifications
+func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
+	// Only accept POST requests
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Read and parse the request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("Error reading push notification body: %v", err)
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate JWT token if provided
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		// In a real implementation, validate the token here
+		// For this example, we just log it
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		log.Printf("Received notification with token: %s", token)
+	}
+
+	// Log the notification
+	log.Printf("Received push notification: %s", string(body))
+
+	// Parse the notification
+	var notification map[string]interface{}
+	if err := json.Unmarshal(body, &notification); err != nil {
+		log.Printf("Error parsing notification JSON: %v", err)
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Display the notification
+	fmt.Println("\n[PUSH NOTIFICATION RECEIVED]")
+	fmt.Println(strings.Repeat("-", 60))
+	taskID, _ := notification["id"].(string)
+	fmt.Printf("Task ID: %s\n", taskID)
+
+	// Display status update if present
+	if status, ok := notification["status"].(map[string]interface{}); ok {
+		state, _ := status["state"].(string)
+		timestamp, _ := status["timestamp"].(string)
+		fmt.Printf("Status: %s (%s)\n", state, timestamp)
+
+		// Display message if present
+		if message, ok := status["message"].(map[string]interface{}); ok {
+			role, _ := message["role"].(string)
+			fmt.Printf("Message from %s:\n", role)
+
+			if parts, ok := message["parts"].([]interface{}); ok {
+				for _, part := range parts {
+					if textPart, ok := part.(map[string]interface{}); ok {
+						if text, ok := textPart["text"].(string); ok {
+							fmt.Printf("  %s\n", text)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Display artifact if present
+	if artifact, ok := notification["artifact"].(map[string]interface{}); ok {
+		name, _ := artifact["name"].(string)
+		fmt.Printf("Artifact: %s\n", name)
+
+		if parts, ok := artifact["parts"].([]interface{}); ok {
+			for _, part := range parts {
+				if textPart, ok := part.(map[string]interface{}); ok {
+					if text, ok := textPart["text"].(string); ok {
+						fmt.Printf("  %s\n", text)
+					}
+				}
+			}
+		}
+	}
+
+	fmt.Println(strings.Repeat("-", 60))
+
+	// Respond with success
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+// startPushServer starts an HTTP server to receive push notifications
+func startPushServer(config Config) error {
+	if pushServer != nil {
+		return fmt.Errorf("server is already running")
+	}
+
+	// Create a new server mux
+	mux := http.NewServeMux()
+	mux.HandleFunc("/push", PushNotificationHandler)
+
+	// Create the server
+	addr := fmt.Sprintf("%s:%d", config.ServerHost, config.ServerPort)
+	pushServer = &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
+	// Start the server in a goroutine
+	go func() {
+		log.Printf("Starting push notification server on %s", addr)
+		if err := pushServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Push server error: %v", err)
+		}
+	}()
+
+	return nil
+}
+
+// stopPushServer gracefully stops the push notification server
+func stopPushServer() error {
+	if pushServer == nil {
+		return fmt.Errorf("no server is running")
+	}
+
+	// Create a timeout context for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Attempt to gracefully shut down the server
+	if err := pushServer.Shutdown(ctx); err != nil {
+		return fmt.Errorf("server shutdown failed: %v", err)
+	}
+
+	pushServer = nil
+	log.Println("Push notification server stopped")
+	return nil
+}
+
+// setPushNotification sets up push notification for a task
+func setPushNotification(
+	a2aClient *client.A2AClient,
+	taskID, callbackURL string,
+	token *string,
+	timeout time.Duration,
+) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	log.Printf("Setting push notification for task %s to URL %s", taskID, callbackURL)
+
+	// Create the push notification configuration
+	pushConfig := protocol.PushNotificationConfig{
+		URL: callbackURL,
+	}
+
+	// Set token if provided
+	if token != nil {
+		pushConfig.Token = *token
+	}
+
+	// Create the task push notification configuration
+	taskPushConfig := protocol.TaskPushNotificationConfig{
+		ID:                     taskID,
+		PushNotificationConfig: pushConfig,
+	}
+
+	// Call the client method to set push notification
+	result, err := a2aClient.SetPushNotification(ctx, taskPushConfig)
+	if err != nil {
+		log.Printf("ERROR: Failed to set push notification: %v", err)
+		fmt.Printf("Failed to set push notification: %v\n", err)
+		return
+	}
+
+	// Display success
+	fmt.Println("Push notification set successfully:")
+	fmt.Printf("  Task ID: %s\n", result.ID)
+	fmt.Printf("  URL: %s\n", result.PushNotificationConfig.URL)
+	if result.PushNotificationConfig.Token != "" {
+		fmt.Printf("  Token: %s\n", result.PushNotificationConfig.Token)
+	}
+}
+
+// getPushNotification gets the push notification configuration for a task
+func getPushNotification(a2aClient *client.A2AClient, taskID string, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	log.Printf("Getting push notification config for task %s", taskID)
+
+	// Create task ID params
+	taskIDParams := protocol.TaskIDParams{
+		ID: taskID,
+	}
+
+	// Call the client method to get push notification
+	result, err := a2aClient.GetPushNotification(ctx, taskIDParams)
+	if err != nil {
+		log.Printf("ERROR: Failed to get push notification: %v", err)
+		fmt.Printf("Failed to get push notification: %v\n", err)
+		return
+	}
+
+	// Display the push notification configuration
+	fmt.Println("Push notification configuration:")
+	fmt.Printf("  Task ID: %s\n", result.ID)
+	fmt.Printf("  URL: %s\n", result.PushNotificationConfig.URL)
+	if result.PushNotificationConfig.Token != "" {
+		fmt.Printf("  Token: %s\n", result.PushNotificationConfig.Token)
+	}
+
+	// Display authentication info if present
+	if result.PushNotificationConfig.Authentication != nil {
+		auth := result.PushNotificationConfig.Authentication
+		if len(auth.Schemes) > 0 {
+			fmt.Printf("  Authentication Schemes: %v\n", auth.Schemes)
+		}
+		if auth.Credentials != "" {
+			fmt.Printf("  Credentials: %s\n", auth.Credentials)
+		}
+	}
+
+	// Display metadata if present
+	if len(result.PushNotificationConfig.Metadata) > 0 {
+		fmt.Println("  Metadata:")
+		for key, value := range result.PushNotificationConfig.Metadata {
+			fmt.Printf("    %s: %v\n", key, value)
+		}
+	}
 }
