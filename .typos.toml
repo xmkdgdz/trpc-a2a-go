@@ -14,7 +14,8 @@ extend-exclude = [
   "*.trpc.go",
   "*.pb.go",
   "*_string.go",
-  "*.gen.go"
+  "*.gen.go",
+  "examples/"
 ]
 
 # Allow specific identifiers
