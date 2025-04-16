@@ -10,6 +10,7 @@
 package auth_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 	"trpc.group/trpc-go/a2a-go/auth"
 )
 
@@ -94,6 +96,32 @@ func TestJWTAuthProvider(t *testing.T) {
 		assert.Nil(t, user)
 		assert.Contains(t, err.Error(), "expired")
 	})
+
+	// Test client configuration
+	t.Run("ConfigureClient", func(t *testing.T) {
+		client := &http.Client{}
+		configuredClient := provider.ConfigureClient(client)
+		require.NotNil(t, configuredClient)
+		require.NotNil(t, configuredClient.Transport)
+
+		// Create a test server that validates auth header
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get(auth.AuthHeaderName)
+			if authHeader == "" {
+				t.Error("Expected Authorization header but got none")
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		// Make a request
+		resp, err := configuredClient.Get(server.URL)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
 }
 
 func TestAPIKeyAuthProvider(t *testing.T) {
@@ -152,6 +180,202 @@ func TestAPIKeyAuthProvider(t *testing.T) {
 		assert.ErrorIs(t, err, auth.ErrInvalidToken)
 		assert.Nil(t, user)
 	})
+
+	// Test client configuration
+	t.Run("ConfigureClient_WithAPIKey", func(t *testing.T) {
+		provider := auth.NewAPIKeyAuthProvider(keyMap, headerName)
+		provider.SetClientAPIKey("api-key-1")
+
+		client := &http.Client{}
+		configuredClient := provider.ConfigureClient(client)
+		require.NotNil(t, configuredClient)
+		require.NotNil(t, configuredClient.Transport)
+
+		// Create a test server that validates API key header
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			apiKey := r.Header.Get(headerName)
+			if apiKey != "api-key-1" {
+				t.Errorf("Expected API key header with value 'api-key-1', got: %s", apiKey)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		// Make a request
+		resp, err := configuredClient.Get(server.URL)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	// Test no client configuration when no API key set
+	t.Run("ConfigureClient_NoAPIKey", func(t *testing.T) {
+		provider := auth.NewAPIKeyAuthProvider(keyMap, headerName)
+		// No SetClientAPIKey call
+
+		client := &http.Client{}
+		configuredClient := provider.ConfigureClient(client)
+		require.NotNil(t, configuredClient)
+		// Should be same as original client
+		assert.Equal(t, client, configuredClient)
+	})
+}
+
+func TestOAuth2AuthProvider(t *testing.T) {
+	// Setup a mock OAuth2 userinfo server
+	mockUserInfo := map[string]interface{}{
+		"sub":   "user123",
+		"name":  "Test User",
+		"email": "test@example.com",
+		"scope": "profile email",
+	}
+
+	userInfoServer := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check for Authorization header
+			authHeader := r.Header.Get("Authorization")
+			if authHeader != "Bearer test-token" {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(mockUserInfo)
+		}))
+	defer userInfoServer.Close()
+
+	// Test authenticate with user info
+	t.Run("Authenticate_WithUserInfo", func(t *testing.T) {
+		provider := auth.NewOAuth2AuthProviderWithConfig(
+			&oauth2.Config{},
+			userInfoServer.URL,
+			"sub",
+		)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set(auth.AuthHeaderName, "Bearer test-token")
+
+		user, err := provider.Authenticate(req)
+		require.NoError(t, err)
+		assert.Equal(t, "user123", user.ID)
+		assert.Equal(t, "Test User", user.Claims["name"])
+		assert.NotNil(t, user.OAuth2Info)
+	})
+
+	// Test authenticate without user info
+	t.Run("Authenticate_WithoutUserInfo", func(t *testing.T) {
+		provider := auth.NewOAuth2AuthProviderWithConfig(
+			&oauth2.Config{},
+			"", // No userinfo URL
+			"",
+		)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set(auth.AuthHeaderName, "Bearer test-token")
+
+		user, err := provider.Authenticate(req)
+		require.NoError(t, err)
+		assert.Equal(t, "oauth2-user", user.ID) // Generic ID
+		assert.NotNil(t, user.OAuth2Info)
+	})
+
+	// Test missing token
+	t.Run("Authenticate_MissingToken", func(t *testing.T) {
+		provider := auth.NewOAuth2AuthProviderWithConfig(
+			&oauth2.Config{},
+			"",
+			"",
+		)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+
+		user, err := provider.Authenticate(req)
+		assert.ErrorIs(t, err, auth.ErrMissingToken)
+		assert.Nil(t, user)
+	})
+
+	// Test invalid token format
+	t.Run("Authenticate_InvalidTokenFormat", func(t *testing.T) {
+		provider := auth.NewOAuth2AuthProviderWithConfig(
+			&oauth2.Config{},
+			"",
+			"",
+		)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set(auth.AuthHeaderName, "InvalidFormat test-token")
+
+		user, err := provider.Authenticate(req)
+		assert.ErrorIs(t, err, auth.ErrInvalidAuthHeader)
+		assert.Nil(t, user)
+	})
+
+	// Test invalid user info response
+	t.Run("Authenticate_InvalidUserInfoResponse", func(t *testing.T) {
+		invalidUserInfoServer := httptest.NewServer(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Return an invalid JSON response
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte("{invalid json"))
+			}))
+		defer invalidUserInfoServer.Close()
+
+		provider := auth.NewOAuth2AuthProviderWithConfig(
+			&oauth2.Config{},
+			invalidUserInfoServer.URL,
+			"sub",
+		)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set(auth.AuthHeaderName, "Bearer test-token")
+
+		user, err := provider.Authenticate(req)
+		assert.Error(t, err)
+		assert.Nil(t, user)
+	})
+
+	// Test client credentials provider
+	t.Run("OAuth2ClientCredentials", func(t *testing.T) {
+		// This is more of a structural test since we can't easily test the actual OAuth2 flow in unit tests
+		provider := auth.NewOAuth2ClientCredentialsProvider(
+			"client-id",
+			"client-secret",
+			"https://example.com/oauth2/token",
+			[]string{"scope1", "scope2"},
+		)
+
+		assert.NotNil(t, provider)
+
+		// Test that ConfigureClient returns a client
+		client := &http.Client{}
+		configuredClient := provider.ConfigureClient(client)
+		assert.NotNil(t, configuredClient)
+	})
+
+	// Test setting a token source
+	t.Run("SetTokenSource", func(t *testing.T) {
+		provider := auth.NewOAuth2AuthProviderWithConfig(
+			&oauth2.Config{},
+			"",
+			"",
+		)
+
+		// Create a static token source
+		token := &oauth2.Token{
+			AccessToken: "static-token",
+			TokenType:   "Bearer",
+			Expiry:      time.Now().Add(time.Hour),
+		}
+		tokenSource := oauth2.StaticTokenSource(token)
+		provider.SetTokenSource(tokenSource)
+
+		// Ensure the client is configured with our token source
+		client := &http.Client{}
+		configuredClient := provider.ConfigureClient(client)
+		assert.NotNil(t, configuredClient)
+		assert.NotEqual(t, client, configuredClient) // Should be a new client
+	})
 }
 
 func TestChainAuthProvider(t *testing.T) {
@@ -169,8 +393,15 @@ func TestChainAuthProvider(t *testing.T) {
 	}
 	apiKeyProvider := auth.NewAPIKeyAuthProvider(keyMap, "X-API-Key")
 
+	// Setup OAuth2 provider
+	oauth2Provider := auth.NewOAuth2AuthProviderWithConfig(
+		&oauth2.Config{},
+		"", // No userinfo URL for simplicity
+		"",
+	)
+
 	// Create chain provider
-	chainProvider := auth.NewChainAuthProvider(jwtProvider, apiKeyProvider)
+	chainProvider := auth.NewChainAuthProvider(jwtProvider, apiKeyProvider, oauth2Provider)
 
 	// Test JWT authentication success
 	t.Run("Authenticate_JWT_Success", func(t *testing.T) {
@@ -203,52 +434,89 @@ func TestChainAuthProvider(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, user)
 	})
+
+	// Test client configuration uses first provider
+	t.Run("ConfigureClient", func(t *testing.T) {
+		// Set up a chain with API key first
+		apiKeyProvider.SetClientAPIKey("test-api-key")
+		apiKeyFirstChain := auth.NewChainAuthProvider(apiKeyProvider, jwtProvider)
+
+		client := &http.Client{}
+		configuredClient := apiKeyFirstChain.ConfigureClient(client)
+		require.NotNil(t, configuredClient)
+		require.NotEqual(t, client, configuredClient) // Should be a different client
+
+		// Create a test server that validates the API key
+		server := httptest.NewServer(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				apiKey := r.Header.Get("X-API-Key")
+				if apiKey != "test-api-key" {
+					t.Errorf("Expected 'X-API-Key: test-api-key', got: %s", apiKey)
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+		defer server.Close()
+
+		// Make a request
+		resp, err := configuredClient.Get(server.URL)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
 }
 
 func TestAuthMiddleware(t *testing.T) {
-	// Setup a simple API key provider for testing
-	keyMap := map[string]string{
-		"valid-key": "test-user",
-	}
-	provider := auth.NewAPIKeyAuthProvider(keyMap, "X-API-Key")
+	// Setup JWT provider for testing middleware
+	provider := auth.NewJWTAuthProvider(
+		[]byte("test-secret"),
+		"",
+		"",
+		1*time.Hour,
+	)
 
 	// Create middleware
 	middleware := auth.NewMiddleware(provider)
 
-	// Create a test handler that checks for authenticated user
+	// Create test handler that checks for authenticated user in context
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := r.Context().Value(auth.AuthUserKey).(*auth.User)
-		if !ok {
-			http.Error(w, "No user in context", http.StatusInternalServerError)
+		if !ok || user == nil {
+			t.Error("Expected authenticated user in context but found none")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		// Respond with user ID to verify
 		w.Write([]byte(user.ID))
 	})
 
-	// Wrap the test handler with the auth middleware
+	// Wrap the test handler with the middleware
 	wrappedHandler := middleware.Wrap(testHandler)
 
-	// Test successful authentication
-	t.Run("Middleware_Success", func(t *testing.T) {
+	// Test with valid authentication
+	t.Run("ValidAuthentication", func(t *testing.T) {
+		token, err := provider.CreateToken("test-user", nil)
+		require.NoError(t, err)
+
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.Header.Set("X-API-Key", "valid-key")
-		recorder := httptest.NewRecorder()
+		req.Header.Set(auth.AuthHeaderName, "Bearer "+token)
+		rr := httptest.NewRecorder()
 
-		wrappedHandler.ServeHTTP(recorder, req)
+		wrappedHandler.ServeHTTP(rr, req)
 
-		assert.Equal(t, http.StatusOK, recorder.Code)
-		assert.Equal(t, "test-user", recorder.Body.String())
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "test-user", rr.Body.String())
 	})
 
-	// Test authentication failure
-	t.Run("Middleware_Failure", func(t *testing.T) {
+	// Test with invalid authentication
+	t.Run("InvalidAuthentication", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.Header.Set("X-API-Key", "invalid-key")
-		recorder := httptest.NewRecorder()
+		// No auth header
+		rr := httptest.NewRecorder()
 
-		wrappedHandler.ServeHTTP(recorder, req)
+		wrappedHandler.ServeHTTP(rr, req)
 
-		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+		assert.Equal(t, http.StatusUnauthorized, rr.Code)
 	})
 }

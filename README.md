@@ -267,6 +267,93 @@ srv, err := server.NewA2AServer(
 )
 ```
 
+## Authentication
+
+The a2a-go framework supports multiple authentication methods for securing communication between agents and clients:
+
+### Supported Authentication Methods
+
+- **JWT (JSON Web Tokens)**: Secure token-based authentication with support for audience and issuer validation.
+- **API Keys**: Simple key-based authentication using custom headers.
+- **OAuth 2.0**: Complete OAuth2 support including:
+  - Client Credentials flow
+  - Password Credentials flow
+  - Custom token sources
+  - User info retrieval
+
+### Client Authentication
+
+To create an authenticated client, use one of the authentication options:
+
+```go
+// JWT Authentication
+client, err := client.NewA2AClient(
+    "https://agent.example.com/",
+    client.WithJWTAuth(secretKey, audience, issuer, tokenLifetime),
+)
+
+// API Key Authentication
+client, err := client.NewA2AClient(
+    "https://agent.example.com/",
+    client.WithAPIKeyAuth("your-api-key", "X-API-Key"),
+)
+
+// OAuth2 Client Credentials
+client, err := client.NewA2AClient(
+    "https://agent.example.com/",
+    client.WithOAuth2ClientCredentials(
+        "client-id",
+        "client-secret",
+        "https://auth.example.com/token",
+        []string{"scope1", "scope2"},
+    ),
+)
+```
+
+See the `examples/auth_client` directory for complete examples of using different authentication methods.
+
+### Server Authentication
+
+On the server side, implement authentication using middleware:
+
+```go
+// Create an authentication provider
+jwtProvider := auth.NewJWTAuthProvider(secretKey, audience, issuer, tokenLifetime)
+
+// Create middleware
+authMiddleware := auth.NewMiddleware(jwtProvider)
+
+// Wrap your handler
+http.Handle("/protected", authMiddleware.Wrap(yourHandler))
+```
+
+For chaining multiple authentication methods:
+
+```go
+chainProvider := auth.NewChainAuthProvider(
+    jwtProvider,
+    apiKeyProvider,
+    oauth2Provider,
+)
+```
+
+### Push Notification Authentication
+
+The framework supports JWT-based authentication for push notification endpoints with automatic key generation and JWKS publishing:
+
+```go
+// Create an authenticator
+notifAuth := auth.NewPushNotificationAuthenticator()
+
+// Generate a key pair
+if err := notifAuth.GenerateKeyPair(); err != nil {
+    // Handle error
+}
+
+// Expose JWKS endpoint
+http.HandleFunc("/.well-known/jwks.json", notifAuth.HandleJWKS)
+```
+
 ## Future Enhancements
 
 - Persistent storage
