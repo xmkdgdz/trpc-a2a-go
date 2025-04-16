@@ -196,10 +196,17 @@ func runInteractiveSession(a2aClient *client.A2AClient, config Config) {
 	reader := bufio.NewReader(os.Stdin)
 	sessionID := config.SessionID
 	var lastTaskID string
+	var lastTaskState protocol.TaskState
 	var useStreaming = !config.ForceNoStreaming
 
 	for {
-		fmt.Print("> ")
+		// Display prompt with indicator if we're continuing a task
+		if lastTaskState == protocol.TaskStateInputRequired {
+			fmt.Print("[Continuing task - input required] > ")
+		} else {
+			fmt.Print("> ")
+		}
+
 		input, readErr := reader.ReadString('\n')
 
 		if readErr != nil {
@@ -225,11 +232,39 @@ func runInteractiveSession(a2aClient *client.A2AClient, config Config) {
 			&useStreaming,
 			lastTaskID,
 		); cmdResult {
+			// Reset task state after command processing
+			lastTaskState = ""
 			continue
 		}
 
 		// Process the user input and handle the agent interaction
-		lastTaskID = processUserInput(a2aClient, input, sessionID, config, useStreaming)
+		// If we're in input-required state, use the existing task ID
+		var taskID string
+		if lastTaskState == protocol.TaskStateInputRequired {
+			taskID = processUserInput(a2aClient, input, sessionID, config, useStreaming, lastTaskID)
+		} else {
+			taskID = processUserInput(a2aClient, input, sessionID, config, useStreaming, "")
+		}
+
+		// Update the last task ID and check task state
+		lastTaskID = taskID
+
+		// Get the current task state to check if it's input-required
+		ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
+		task, err := a2aClient.GetTasks(ctx, protocol.TaskQueryParams{ID: taskID})
+		cancel()
+
+		if err == nil && task != nil {
+			lastTaskState = task.Status.State
+
+			// Display a message if input is required
+			if lastTaskState == protocol.TaskStateInputRequired {
+				fmt.Println(strings.Repeat("-", 60))
+				fmt.Println("[Additional input required to complete this task. Continue typing.]")
+			}
+		} else {
+			lastTaskState = ""
+		}
 	}
 }
 
@@ -364,6 +399,11 @@ func processCommand(
 		fmt.Println("The push notification feature is not implemented in this example.")
 		fmt.Printf("Would get push notification configuration for task %s\n", parts[1])
 		return true
+
+	case "new":
+		// Force start a new task (ignore current input-required state)
+		fmt.Println("Starting a new task on next input.")
+		return true
 	}
 
 	return false
@@ -389,8 +429,10 @@ func displayHelpMessage() {
 	fmt.Println("  card                     - Fetch and display the agent's capabilities card")
 	fmt.Println("  push <task-id> <url> [token] - Set push notification for a task")
 	fmt.Println("  getpush <task-id>        - Get push notification configuration for a task")
+	fmt.Println("  new                      - Start a new task (ignore current input-required state)")
 	fmt.Println("")
 	fmt.Println("For normal interaction, just type your message and press Enter.")
+	fmt.Println("When a task requires additional input, your next message will continue the same task.")
 	fmt.Println(strings.Repeat("-", 60))
 }
 
@@ -401,9 +443,15 @@ func processUserInput(
 	sessionID string,
 	config Config,
 	useStreaming bool,
+	existingTaskID string,
 ) string {
-	// Generate unique task ID.
-	taskID := generateTaskID()
+	// Generate unique task ID or use existing one if provided
+	var taskID string
+	if existingTaskID != "" {
+		taskID = existingTaskID
+	} else {
+		taskID = generateTaskID()
+	}
 
 	// Create message and parameters.
 	params := createTaskParams(taskID, sessionID, input, config.HistoryLength)
@@ -541,6 +589,11 @@ func handleStandardInteraction(
 		}
 	}
 
+	// Add special handling for input-required state
+	if task.Status.State == protocol.TaskStateInputRequired {
+		fmt.Println("  [Additional input required]")
+	}
+
 	fmt.Println(strings.Repeat("-", 60))
 }
 
@@ -579,9 +632,15 @@ func processStreamResponse(
 					printMessage(*e.Status.Message)
 				}
 
-				// Store the final state if this is a terminal status
-				if e.IsFinal() {
-					finalTaskState = e.Status.State
+				// Update the task state
+				finalTaskState = e.Status.State
+
+				// Handle final states and input-required state
+				if e.Status.State == protocol.TaskStateInputRequired {
+					// This is not a final state, but we need to store it
+					fmt.Println("  [Additional input required]")
+					return finalTaskState, finalArtifacts
+				} else if e.IsFinal() {
 					log.Printf("Final status received: %s", finalTaskState)
 
 					// Print a message indicating task completion state
