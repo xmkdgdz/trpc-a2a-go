@@ -1,0 +1,7 @@
+# Ignore files without extension
+*
+!*/
+!*.*
+
+test_output.txt
+*cover.out*
