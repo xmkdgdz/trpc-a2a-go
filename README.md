@@ -1,4 +1,4 @@
-# tRPC-tRPC-A2A-go
+# tRPC-A2A-Go
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/trpc-group/trpc-a2a-go.svg)](https://pkg.go.dev/github.com/trpc-group/trpc-a2a-go)
 [![Go Report Card](https://goreportcard.com/badge/github.com/trpc-group/trpc-a2a-go)](https://goreportcard.com/report/github.com/trpc-group/trpc-a2a-go)
