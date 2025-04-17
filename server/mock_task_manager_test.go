@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"trpc.group/trpc-go/trpc-a2a-go/jsonrpc"
+	"trpc.group/trpc-go/trpc-a2a-go/internal/jsonrpc"
 	"trpc.group/trpc-go/trpc-a2a-go/protocol"
 	"trpc.group/trpc-go/trpc-a2a-go/taskmanager"
 )
