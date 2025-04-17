@@ -9,74 +9,7 @@
 
 This is tRPC group's Go implementation of the [A2A protocol](https://google.github.io/A2A/), enabling different AI agents to discover and collaborate with each other.
 
-## Core Components
-
-Implemented core components include:
-
-### 1. Protocol Support
-
-- Complete implementation of the A2A protocol specification
-- Includes JSON-RPC message structures (`jsonrpc`) and protocol types (`protocol`)
-- Provides data types for task states, parts, artifacts, and more
-
-### 2. Client (`client`)
-
-- Implements interaction with A2A servers
-- Supports sending tasks, getting task status, and canceling tasks
-- Handles JSON-RPC request/response formatting
-- Supports streaming task updates (SSE)
-
-### 3. Server (`server`)
-
-- Provides an HTTP server based on the standard library
-- Handles JSON-RPC request routing
-- Supports agent card discovery (`/.well-known/agent.json`)
-- Implements Server-Sent Events (SSE) for streaming updates
-- Includes authentication middleware support
-
-### 4. Task Management (`taskmanager`)
-
-- Defines interface for task lifecycle management
-- Provides default in-memory implementation (`MemoryTaskManager`)
-- Supports task status updates and notifications
-- Provides `TaskProcessor` interface for custom processing logic
-
-### 5. Authentication (`auth`)
-
-- Flexible authentication middleware
-- Supports JWT and API key authentication methods
-- Chain authentication provider for multiple auth methods
-- JWT-based push notification authentication
-- JWKS endpoint for public key distribution
-
-## Examples
-
-The repository includes several examples demonstrating different aspects of the A2A protocol:
-
-### 1. Basic Example (`examples/basic`)
-
-A comprehensive example showcasing:
-- A versatile text processing server with multiple operations
-- A feature-rich CLI client with support for all core A2A protocol APIs
-- Streaming and non-streaming modes
-- Multi-turn conversations
-- Task management (create, cancel, get)
-- Agent capability discovery
-
-### 2. Authentication Examples (`examples/auth`)
-
-Complete examples demonstrating authentication:
-- Server implementation with various authentication methods
-- Client examples showing how to connect with different auth methods
-- JWT, API key, and OAuth2 implementations
-
-### 3. Streaming Examples (`examples/streaming`)
-
-Examples focused on streaming capabilities:
-- Server implementation with streaming response support
-- Client implementation for handling streaming data
-
-## Usage
+## Quick Start
 
 ### Running the Basic Server Example
 
@@ -111,6 +44,33 @@ go run main.go --timeout 30s
 # Disable streaming mode
 go run main.go --no-stream
 ```
+
+## Examples
+
+The repository includes several examples demonstrating different aspects of the A2A protocol:
+
+### 1. Basic Example ([examples/basic](examples/basic))
+
+A comprehensive example showcasing:
+- A versatile text processing server with multiple operations
+- A feature-rich CLI client with support for all core A2A protocol APIs
+- Streaming and non-streaming modes
+- Multi-turn conversations
+- Task management (create, cancel, get)
+- Agent capability discovery
+
+### 2. Authentication Examples ([examples/auth](examples/auth))
+
+Complete examples demonstrating authentication:
+- Server implementation with various authentication methods
+- Client examples showing how to connect with different auth methods
+- JWT, API key, and OAuth2 implementations
+
+### 3. Streaming Examples ([examples/streaming](examples/streaming))
+
+Examples focused on streaming capabilities:
+- Server implementation with streaming response support
+- Client implementation for handling streaming data
 
 ### Running Authentication Examples
 
@@ -240,7 +200,11 @@ if err := srv.Start(":8080"); err != nil {
 }
 ```
 
-## Adding Authentication
+## Authentication
+
+The trpc-a2a-go framework supports multiple authentication methods for securing communication between agents and clients:
+
+### Adding Authentication
 
 To secure your A2A server, you can use the authentication providers:
 
@@ -273,23 +237,6 @@ srv, err := server.NewA2AServer(
     server.WithAuthProvider(jwtProvider), // or apiKeyProvider
 )
 ```
-
-## Push Notification Authentication
-
-A2A supports authenticated push notifications:
-
-```go
-// Enable JWKS endpoint for push notifications
-srv, err := server.NewA2AServer(
-    agentCard,
-    taskManager,
-    server.WithJWKSEndpoint(true, "/.well-known/jwks.json"),
-)
-```
-
-## Authentication
-
-The trpc-a2a-go framework supports multiple authentication methods for securing communication between agents and clients:
 
 ### Supported Authentication Methods
 
@@ -329,7 +276,7 @@ client, err := client.NewA2AClient(
 )
 ```
 
-See the `examples/auth/client` directory for complete examples of using different authentication methods.
+See the [examples/auth/client](examples/auth/client) directory for complete examples of using different authentication methods.
 
 ### Server Authentication
 
@@ -371,6 +318,19 @@ if err := notifAuth.GenerateKeyPair(); err != nil {
 
 // Expose JWKS endpoint
 http.HandleFunc("/.well-known/jwks.json", notifAuth.HandleJWKS)
+```
+
+### Push Notification Authentication
+
+A2A supports authenticated push notifications:
+
+```go
+// Enable JWKS endpoint for push notifications
+srv, err := server.NewA2AServer(
+    agentCard,
+    taskManager,
+    server.WithJWKSEndpoint(true, "/.well-known/jwks.json"),
+)
 ```
 
 ## Future Enhancements
