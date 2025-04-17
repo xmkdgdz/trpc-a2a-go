@@ -7,7 +7,7 @@
 [![Tests](https://github.com/trpc-group/a2a-go/actions/workflows/prc.yml/badge.svg)](https://github.com/trpc-group/a2a-go/actions/workflows/prc.yml)
 [![Coverage](https://codecov.io/gh/trpc-group/a2a-go/branch/main/graph/badge.svg)](https://app.codecov.io/gh/trpc-group/a2a-go/tree/main)
 
-Go implementation of the A2A protocol, enabling different AI agents to discover and collaborate with each other.
+Go implementation of the [A2A protocol](https://google.github.io/A2A/), enabling different AI agents to discover and collaborate with each other.
 
 ## Core Components
 
