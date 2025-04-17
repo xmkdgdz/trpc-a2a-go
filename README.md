@@ -371,3 +371,7 @@ http.HandleFunc("/.well-known/jwks.json", notifAuth.HandleJWKS)
 ## Contributing
 
 Contributions and improvement suggestions are welcome! Please ensure your code follows Go coding standards and includes appropriate tests. 
+
+## Acknowledgements
+
+This project's protocol design is based on Google's open-source A2A protocol ([original repository](https://github.com/google/A2A)), following the Apache 2.0 license. This is an unofficial implementation.
