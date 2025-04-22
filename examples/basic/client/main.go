@@ -554,7 +554,7 @@ func handleStreamingInteraction(
 		getFinalTaskState(a2aClient, taskID, config.Timeout, finalTaskState, finalArtifacts, config.HistoryLength)
 	}
 
-	log.Printf("Stream processing finished for task %s.", taskID)
+	log.Printf("Stream processing finished for task %s", taskID)
 	fmt.Println(strings.Repeat("-", 60))
 }
 
