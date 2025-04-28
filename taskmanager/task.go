@@ -7,6 +7,8 @@
 package taskmanager
 
 import (
+	"context"
+
 	"trpc.group/trpc-go/trpc-a2a-go/protocol"
 )
 
@@ -19,8 +21,11 @@ type memoryTaskHandle struct {
 }
 
 // UpdateStatus implements TaskHandle.
-func (h *memoryTaskHandle) UpdateStatus(state protocol.TaskState, msg *protocol.Message) error {
-	return h.manager.UpdateTaskStatus(h.taskID, state, msg)
+func (h *memoryTaskHandle) UpdateStatus(
+	state protocol.TaskState,
+	msg *protocol.Message,
+) error {
+	return h.manager.UpdateTaskStatus(context.Background(), h.taskID, state, msg)
 }
 
 // AddArtifact implements TaskHandle.

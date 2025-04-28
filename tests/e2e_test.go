@@ -503,5 +503,3 @@ func TestE2E_BasicAgent_Streaming(t *testing.T) {
 	expectedText := testReverseString(inputText)
 	require.Equal(t, expectedText, reversedText, "Artifact should contain reversed text")
 }
-
-// ... existing code ...

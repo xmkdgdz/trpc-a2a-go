@@ -41,6 +41,16 @@ type TaskProcessor interface {
 	Process(ctx context.Context, taskID string, initialMsg protocol.Message, handle TaskHandle) error
 }
 
+// TaskProcessorWithStatusUpdate is an optional interface that can be implemented by TaskProcessor
+// to receive notifications when the task status changes.
+type TaskProcessorWithStatusUpdate interface {
+	TaskProcessor
+	// OnTaskStatusUpdate is called when the task status changes.
+	// It receives the task ID, the new state, and the optional message.
+	// It should return an error if the status update fails.
+	OnTaskStatusUpdate(ctx context.Context, taskID string, state protocol.TaskState, message *protocol.Message) error
+}
+
 // TaskManager defines the interface for managing A2A task lifecycles based on the protocol.
 // Implementations handle task creation, updates, retrieval, cancellation, and events,
 // delegating the actual processing logic to an injected TaskProcessor.
