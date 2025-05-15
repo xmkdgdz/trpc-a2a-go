@@ -4,7 +4,7 @@
 //
 // trpc-a2a-go is licensed under the Apache License Version 2.0.
 
-// Package log provides logging utilities for tdxa-go.
+// Package log provides logging utilities.
 package log
 
 import (
