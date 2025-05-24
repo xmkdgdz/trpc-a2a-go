@@ -116,6 +116,20 @@ func (h *redisTaskHandle) IsStreamingRequest() bool {
 	return exists && len(subscribers) > 0
 }
 
+// GetSessionID implements TaskHandle.
+func (h *redisTaskHandle) GetSessionID() *string {
+	h.manager.subMu.RLock()
+	defer h.manager.subMu.RUnlock()
+
+	task, err := h.manager.getTaskInternal(context.Background(), h.taskID)
+	if err != nil {
+		log.Errorf("Error getting session ID for task %s: %v", h.taskID, err)
+		return nil
+	}
+
+	return task.SessionID
+}
+
 // OnSendTask handles the creation or retrieval of a task and initiates synchronous processing.
 func (m *TaskManager) OnSendTask(ctx context.Context, params protocol.SendTaskParams) (*protocol.Task, error) {
 	// Create or update task
