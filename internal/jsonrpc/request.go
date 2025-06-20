@@ -6,7 +6,11 @@
 
 package jsonrpc
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"trpc.group/trpc-go/trpc-a2a-go/protocol"
+)
 
 // Request represents a JSON-RPC request object.
 type Request struct {
@@ -20,11 +24,17 @@ type Request struct {
 }
 
 // NewRequest creates a new JSON-RPC request with the given method and ID.
+// If id is nil, a new ID will be automatically generated since A2A protocol
+// requires responses for all requests.
 func NewRequest(method string, id interface{}) *Request {
+	if id == nil {
+		// A2A protocol doesn't use notifications - all requests need responses
+		id = protocol.GenerateRPCID()
+	}
 	return &Request{
 		Message: Message{
-			JSONRPC: Version,
 			ID:      id,
+			JSONRPC: Version,
 		},
 		Method: method,
 	}

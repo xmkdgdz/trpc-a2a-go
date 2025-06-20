@@ -4,14 +4,15 @@
 //
 // trpc-a2a-go is licensed under the Apache License Version 2.0.
 
-// Package main implements a streaming server for the A2A protocol.
+// Package main implements a streaming A2A server example.
+// This example demonstrates how to process tasks with streaming responses,
+// breaking large content into chunks and sending them progressively.
 package main
 
 import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"sort"
@@ -19,192 +20,260 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
+	"trpc.group/trpc-go/trpc-a2a-go/log"
 	"trpc.group/trpc-go/trpc-a2a-go/protocol"
 	"trpc.group/trpc-go/trpc-a2a-go/server"
 	"trpc.group/trpc-go/trpc-a2a-go/taskmanager"
 )
 
-// streamingTaskProcessor implements the TaskProcessor interface for streaming responses.
+// streamingMessageProcessor implements the MessageProcessor interface for streaming responses.
 // This processor breaks the input text into chunks and sends them back as a stream.
-type streamingTaskProcessor struct{}
+type streamingMessageProcessor struct{}
 
-// Process implements the core streaming logic.
+// ProcessMessage implements the MessageProcessor interface.
 // It breaks the input text into chunks and sends them back incrementally.
-func (p *streamingTaskProcessor) Process(
+func (p *streamingMessageProcessor) ProcessMessage(
 	ctx context.Context,
-	taskID string,
 	message protocol.Message,
-	handle taskmanager.TaskHandle,
-) error {
-	log.Printf("Processing streaming task %s...", taskID)
+	options taskmanager.ProcessOptions,
+	handle taskmanager.TaskHandler,
+) (*taskmanager.MessageProcessingResult, error) {
+	log.Infof("Processing streaming message...")
 
 	// Extract text from the incoming message.
 	text := extractText(message)
 	if text == "" {
 		errMsg := "input message must contain text"
-		log.Printf("Task %s failed: %s", taskID, errMsg)
+		log.Errorf("Message processing failed: %s", errMsg)
 
-		// Update status to Failed via handle.
-		failedMessage := protocol.NewMessage(
+		// Return error message directly
+		errorMessage := protocol.NewMessage(
 			protocol.MessageRoleAgent,
 			[]protocol.Part{protocol.NewTextPart(errMsg)},
 		)
-		_ = handle.UpdateStatus(protocol.TaskStateFailed, &failedMessage)
-		return fmt.Errorf(errMsg)
+
+		return &taskmanager.MessageProcessingResult{
+			Result: &errorMessage,
+		}, nil
 	}
 
-	// Check if this is a streaming request
-	isStreaming := handle.IsStreamingRequest()
-
-	// If not streaming, use a simplified process flow with fewer updates
-	if !isStreaming {
-		log.Printf("Task %s using non-streaming mode", taskID)
-		return p.processNonStreaming(ctx, taskID, text, handle)
+	// For non-streaming processing, use simplified flow
+	if !options.Streaming {
+		log.Infof("Using non-streaming mode")
+		return p.processNonStreaming(ctx, text, handle)
 	}
 
 	// Continue with streaming process
-	log.Printf("Task %s using streaming mode", taskID)
+	log.Infof("Using streaming mode")
 
-	// Update status to Working with an initial message
-	initialMessage := protocol.NewMessage(
-		protocol.MessageRoleAgent,
-		[]protocol.Part{protocol.NewTextPart("Starting to process your streaming data...")},
-	)
-	if err := handle.UpdateStatus(protocol.TaskStateWorking, &initialMessage); err != nil {
-		log.Printf("Error updating initial status for task %s: %v", taskID, err)
-		return err
+	// Create a task for streaming
+	taskID, err := handle.BuildTask(nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build task: %w", err)
 	}
 
-	// Split the text into chunks to simulate streaming processing
-	chunks := splitTextIntoChunks(text, 5) // Split into chunks of about 5 characters
-	totalChunks := len(chunks)
-
-	// Process each chunk with a small delay to simulate real-time processing
-	for i, chunk := range chunks {
-		// Check for cancellation
-		if err := ctx.Err(); err != nil {
-			log.Printf("Task %s cancelled during streaming: %v", taskID, err)
-			_ = handle.UpdateStatus(protocol.TaskStateCanceled, nil)
-			return err
-		}
-
-		// Process the chunk (in this example, just reverse it)
-		processedChunk := reverseString(chunk)
-
-		// Create a progress update message
-		progressMsg := fmt.Sprintf("Processing chunk %d of %d: %s -> %s",
-			i+1, totalChunks, chunk, processedChunk)
-		statusMsg := protocol.NewMessage(
-			protocol.MessageRoleAgent,
-			[]protocol.Part{protocol.NewTextPart(progressMsg)},
-		)
-
-		// Update status to show progress
-		if err := handle.UpdateStatus(protocol.TaskStateWorking, &statusMsg); err != nil {
-			log.Printf("Error updating progress status for task %s: %v", taskID, err)
-			// Continue processing despite update error
-		}
-
-		// Create an artifact for this chunk
-		isLastChunk := (i == totalChunks-1)
-		chunkArtifact := protocol.Artifact{
-			Name:        stringPtr(fmt.Sprintf("Chunk %d of %d", i+1, totalChunks)),
-			Description: stringPtr("Streaming chunk of processed data"),
-			Index:       i,
-			Parts:       []protocol.Part{protocol.NewTextPart(processedChunk)},
-			Append:      boolPtr(i > 0),       // Append after the first chunk
-			LastChunk:   boolPtr(isLastChunk), // Mark the last chunk
-		}
-
-		// Add the artifact
-		if err := handle.AddArtifact(chunkArtifact); err != nil {
-			log.Printf("Error adding artifact for task %s chunk %d: %v", taskID, i+1, err)
-			// Continue processing despite artifact error
-		}
-
-		// Simulate processing time
-		select {
-		case <-ctx.Done():
-			log.Printf("Task %s cancelled during delay: %v", taskID, ctx.Err())
-			_ = handle.UpdateStatus(protocol.TaskStateCanceled, nil)
-			return ctx.Err()
-		case <-time.After(500 * time.Millisecond): // Simulate work with delay
-			// Continue processing
-		}
+	// Subscribe to the task for streaming events
+	subscriber, err := handle.SubScribeTask(&taskID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe to task: %w", err)
 	}
 
-	// Final completion status update
-	completeMessage := protocol.NewMessage(
-		protocol.MessageRoleAgent,
-		[]protocol.Part{
-			protocol.NewTextPart(
-				fmt.Sprintf("Completed processing all %d chunks successfully!", totalChunks))},
-	)
-	if err := handle.UpdateStatus(protocol.TaskStateCompleted, &completeMessage); err != nil {
-		log.Printf("Error updating final status for task %s: %v", taskID, err)
-		return fmt.Errorf("failed to update final task status: %w", err)
-	}
+	// Start streaming processing in a goroutine
+	go func() {
+		defer func() {
+			if subscriber != nil {
+				subscriber.Close()
+			}
+		}()
 
-	log.Printf("Task %s streaming completed successfully.", taskID)
-	return nil
+		contextID := handle.GetContextID()
+		// Send initial working status
+		workingEvent := protocol.StreamingMessageEvent{
+			Result: &protocol.TaskStatusUpdateEvent{
+				TaskID:    taskID,
+				ContextID: contextID,
+				Kind:      "status-update",
+				Status: protocol.TaskStatus{
+					State: protocol.TaskStateWorking,
+					Message: &protocol.Message{
+						MessageID: uuid.New().String(),
+						Kind:      "message",
+						Role:      protocol.MessageRoleAgent,
+						Parts:     []protocol.Part{protocol.NewTextPart("Starting to process your streaming data...")},
+					},
+				},
+			},
+		}
+		err = subscriber.Send(workingEvent)
+		if err != nil {
+			log.Errorf("Failed to send working event: %v", err)
+		}
+
+		// Split the text into chunks to simulate streaming processing
+		chunks := splitTextIntoChunks(text, 5) // Split into chunks of about 5 characters
+		totalChunks := len(chunks)
+
+		// Process each chunk with a small delay to simulate real-time processing
+		for i, chunk := range chunks {
+			// Check for cancellation
+			if err := ctx.Err(); err != nil {
+				log.Errorf("Task %s cancelled during streaming: %v", taskID, err)
+				cancelEvent := protocol.StreamingMessageEvent{
+					Result: &protocol.TaskStatusUpdateEvent{
+						TaskID:    taskID,
+						ContextID: contextID,
+						Kind:      "status-update",
+						Status: protocol.TaskStatus{
+							State: protocol.TaskStateCanceled,
+						},
+						Final: boolPtr(true),
+					},
+				}
+				err = subscriber.Send(cancelEvent)
+				if err != nil {
+					log.Errorf("Failed to send cancel event: %v", err)
+				}
+				return
+			}
+
+			// Process the chunk (in this example, just reverse it)
+			processedChunk := reverseString(chunk)
+
+			// Create a progress update message
+			progressMsg := fmt.Sprintf("Processing chunk %d of %d: %s -> %s",
+				i+1, totalChunks, chunk, processedChunk)
+
+			// Send progress status update
+			progressEvent := protocol.StreamingMessageEvent{
+				Result: &protocol.TaskStatusUpdateEvent{
+					TaskID:    taskID,
+					ContextID: contextID,
+					Kind:      "status-update",
+					Status: protocol.TaskStatus{
+						State: protocol.TaskStateWorking,
+						Message: &protocol.Message{
+							MessageID: uuid.New().String(),
+							Kind:      "message",
+							Role:      protocol.MessageRoleAgent,
+							Parts:     []protocol.Part{protocol.NewTextPart(progressMsg)},
+						},
+					},
+				},
+			}
+			err = subscriber.Send(progressEvent)
+			if err != nil {
+				log.Errorf("Failed to send progress event: %v", err)
+			}
+
+			// Create an artifact for this chunk
+			isLastChunk := (i == totalChunks-1)
+			chunkArtifact := protocol.Artifact{
+				ArtifactID:  uuid.New().String(),
+				Name:        stringPtr(fmt.Sprintf("Chunk %d of %d", i+1, totalChunks)),
+				Description: stringPtr("Streaming chunk of processed data"),
+				Parts:       []protocol.Part{protocol.NewTextPart(processedChunk)},
+			}
+
+			// Send artifact update event
+			artifactEvent := protocol.StreamingMessageEvent{
+				Result: &protocol.TaskArtifactUpdateEvent{
+					TaskID:    taskID,
+					ContextID: contextID,
+					Kind:      "artifact-update",
+					Artifact:  chunkArtifact,
+					Append:    boolPtr(i > 0),       // Append after the first chunk
+					LastChunk: boolPtr(isLastChunk), // Mark the last chunk
+				},
+			}
+			err = subscriber.Send(artifactEvent)
+			if err != nil {
+				log.Errorf("Failed to send artifact event: %v", err)
+			}
+
+			// Simulate processing time
+			select {
+			case <-ctx.Done():
+				log.Infof("Task %s cancelled during delay: %v", taskID, ctx.Err())
+				cancelEvent := protocol.StreamingMessageEvent{
+					Result: &protocol.TaskStatusUpdateEvent{
+						TaskID:    taskID,
+						ContextID: contextID,
+						Kind:      "status-update",
+						Status: protocol.TaskStatus{
+							State: protocol.TaskStateCanceled,
+						},
+						Final: boolPtr(true),
+					},
+				}
+				err = subscriber.Send(cancelEvent)
+				if err != nil {
+					log.Errorf("Failed to send cancel event: %v", err)
+				}
+				return
+			case <-time.After(500 * time.Millisecond): // Simulate work with delay
+				// Continue processing
+			}
+		}
+
+		// Final completion status update
+		completeEvent := protocol.StreamingMessageEvent{
+			Result: &protocol.TaskStatusUpdateEvent{
+				TaskID:    taskID,
+				ContextID: contextID,
+				Kind:      "status-update",
+				Status: protocol.TaskStatus{
+					State: protocol.TaskStateCompleted,
+					Message: &protocol.Message{
+						MessageID: uuid.New().String(),
+						Kind:      "message",
+						Role:      protocol.MessageRoleAgent,
+						Parts:     []protocol.Part{protocol.NewTextPart(fmt.Sprintf("Completed processing all %d chunks successfully!", totalChunks))},
+					},
+				},
+				Final: boolPtr(true),
+			},
+		}
+		err = subscriber.Send(completeEvent)
+		if err != nil {
+			log.Errorf("Failed to send complete event: %v", err)
+		}
+
+		log.Infof("Task %s streaming completed successfully.", taskID)
+	}()
+
+	return &taskmanager.MessageProcessingResult{
+		StreamingEvents: subscriber,
+	}, nil
 }
 
 // processNonStreaming handles processing for non-streaming requests
 // It processes the entire text at once and returns a single result
-func (p *streamingTaskProcessor) processNonStreaming(
+func (p *streamingMessageProcessor) processNonStreaming(
 	ctx context.Context,
-	taskID string,
 	text string,
-	handle taskmanager.TaskHandle,
-) error {
-	// Update status to Working with an initial message
-	initialMessage := protocol.NewMessage(
-		protocol.MessageRoleAgent,
-		[]protocol.Part{protocol.NewTextPart("Processing your text...")},
-	)
-	if err := handle.UpdateStatus(protocol.TaskStateWorking, &initialMessage); err != nil {
-		log.Printf("Error updating initial status for task %s: %v", taskID, err)
-		return err
-	}
-
+	handle taskmanager.TaskHandler,
+) (*taskmanager.MessageProcessingResult, error) {
 	// Process the entire text at once
 	processedText := reverseString(text)
 
-	// Create a single artifact with the result
-	artifact := protocol.Artifact{
-		Name:        stringPtr("Processed Text"),
-		Description: stringPtr("Complete processed text"),
-		Index:       0,
-		Parts:       []protocol.Part{protocol.NewTextPart(processedText)},
-		LastChunk:   boolPtr(true),
-	}
-
-	// Add the artifact
-	if err := handle.AddArtifact(artifact); err != nil {
-		log.Printf("Error adding artifact for task %s: %v", taskID, err)
-	}
-
-	// Final completion status update
-	completeMessage := protocol.NewMessage(
+	// Return a direct message response
+	responseMessage := protocol.NewMessage(
 		protocol.MessageRoleAgent,
-		[]protocol.Part{
-			protocol.NewTextPart(
-				fmt.Sprintf("Processing complete. Input: %s -> Output: %s", text, processedText))},
+		[]protocol.Part{protocol.NewTextPart(fmt.Sprintf("Processing complete. Input: %s -> Output: %s", text, processedText))},
 	)
-	if err := handle.UpdateStatus(protocol.TaskStateCompleted, &completeMessage); err != nil {
-		log.Printf("Error updating final status for task %s: %v", taskID, err)
-		return fmt.Errorf("failed to update final task status: %w", err)
-	}
 
-	log.Printf("Task %s non-streaming completed successfully.", taskID)
-	return nil
+	return &taskmanager.MessageProcessingResult{
+		Result: &responseMessage,
+	}, nil
 }
 
 // extractText extracts the first text part from a message.
 func extractText(message protocol.Message) string {
 	for _, part := range message.Parts {
 		// Type assert to the concrete TextPart type.
-		if p, ok := part.(protocol.TextPart); ok {
+		if p, ok := part.(*protocol.TextPart); ok {
 			return p.Text
 		}
 	}
@@ -351,21 +420,21 @@ func main() {
 	serverURL := fmt.Sprintf("http://%s/", address)
 
 	// Create the agent card
-	description := "A2A streaming example server that processes text in chunks"
 	agentCard := server.AgentCard{
 		Name:        "Streaming Text Processor",
-		Description: &description,
+		Description: "A2A streaming example server that processes text in chunks",
 		URL:         serverURL,
 		Version:     "1.0.0",
 		Provider: &server.AgentProvider{
 			Organization: "tRPC-A2A-go Examples",
 		},
 		Capabilities: server.AgentCapabilities{
-			Streaming:              true,
-			StateTransitionHistory: true,
+			Streaming:              boolPtr(true),
+			PushNotifications:      boolPtr(false),
+			StateTransitionHistory: boolPtr(true),
 		},
-		DefaultInputModes:  []string{string(protocol.PartTypeText)},
-		DefaultOutputModes: []string{string(protocol.PartTypeText)},
+		DefaultInputModes:  []string{"text"},
+		DefaultOutputModes: []string{"text"},
 		Skills: []server.AgentSkill{
 			{
 				ID:          "streaming_processor",
@@ -377,14 +446,14 @@ func main() {
 					"Lorem ipsum dolor sit amet",
 					"This demonstrates streaming capabilities",
 				},
-				InputModes:  []string{string(protocol.PartTypeText)},
-				OutputModes: []string{string(protocol.PartTypeText)},
+				InputModes:  []string{"text"},
+				OutputModes: []string{"text"},
 			},
 		},
 	}
 
-	// Create the TaskProcessor (streaming logic)
-	processor := &streamingTaskProcessor{}
+	// Create the MessageProcessor (streaming logic)
+	processor := &streamingMessageProcessor{}
 
 	// Create the TaskManager, injecting the processor
 	taskManager, err := taskmanager.NewMemoryTaskManager(processor)
@@ -404,7 +473,7 @@ func main() {
 
 	// Start the server in a goroutine
 	go func() {
-		log.Printf("Starting streaming server on %s...", address)
+		log.Infof("Starting streaming server on %s...", address)
 		if err := srv.Start(address); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
@@ -412,7 +481,7 @@ func main() {
 
 	// Wait for shutdown signal
 	sig := <-sigChan
-	log.Printf("Received signal %v, shutting down server...", sig)
+	log.Infof("Received signal %v, shutting down server...", sig)
 
 	// Graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -422,7 +491,7 @@ func main() {
 		log.Fatalf("Error during server shutdown: %v", err)
 	}
 
-	log.Println("Server shutdown complete")
+	log.Infof("Server shutdown complete")
 }
 
 // Helper functions to create pointers

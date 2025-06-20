@@ -6,6 +6,7 @@ toolchain go1.23.7
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
+	github.com/google/uuid v1.6.0
 	github.com/lestrrat-go/jwx/v2 v2.1.4
 	github.com/stretchr/testify v1.10.0
 	go.uber.org/zap v1.27.0

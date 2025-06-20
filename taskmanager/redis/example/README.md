@@ -1,115 +1,229 @@
-# A2A Redis Task Manager Example
+# Redis TaskManager Example - Text Case Converter
 
-This example demonstrates how to create a complete A2A (Application-to-Application) flow using the Redis task manager. It includes both a server and client implementation that use the official A2A Go packages.
+A simple example demonstrating Redis TaskManager with a **Text to Lowercase Converter** service.
+
+## Overview
+
+- **Server**: Converts text to lowercase using Redis for storage
+- **Client**: Tests both streaming and non-streaming modes with enhanced visual feedback
 
 ## Prerequisites
 
-- Go 1.21 or later
-- Redis 6.0 or later running locally (or accessible through network)
+1. **Go 1.23.0+**
+2. **Redis Server** running on localhost:6379
 
-## Running the Server
+### Quick Redis Setup
 
-The server implements a simple task processor that can receive tasks, process them, and return results. It uses Redis for task storage and state management.
+**Using Docker:**
+```bash
+docker run -d -p 6379:6379 redis:7-alpine
+```
+
+**Using Docker Compose:**
+```bash
+cd examples/redis
+docker-compose up -d
+```
+
+## Running the Example
+
+### 1. Start Redis
+
+Make sure Redis is running:
+```bash
+redis-cli ping
+# Should return: PONG
+```
+
+### 2. Start the Server
 
 ```bash
-# Start Redis if it's not already running
-# For example, using Docker:
-docker run --name redis -p 6379:6379 -d redis
-
-# Run the server with default settings (Redis on localhost:6379)
-cd server
+cd taskmanager/redis/example/server
 go run main.go
-
-# Or with custom settings
-go run main.go -port=8080 -redis=localhost:6379 -redis-pass="" -redis-db=0
 ```
 
-The server supports the following command-line arguments:
+You should see:
+```
+Connected to Redis at localhost:6379 successfully
+Starting Text Case Converter server on :8080
+```
 
-- `-port`: The HTTP port to listen on (default: 8080)
-- `-redis`: Redis server address (default: localhost:6379)
-- `-redis-pass`: Redis password (default: "")
-- `-redis-db`: Redis database number (default: 0)
-
-## Running the Client
-
-The client provides a command-line interface to interact with the server. It supports sending tasks, retrieving task status, and streaming task updates.
-
+With custom parameters:
 ```bash
-cd client
-go run main.go -op=send -message="Hello, world!"
+# Custom Redis address
+go run main.go --redis_addr localhost:6380
 
-# Get task status
-go run main.go -op=get -task=<task-id>
+# Custom server address
+go run main.go --addr :9000
 
-# Cancel a task
-go run main.go -op=cancel -task=<task-id>
+# Both custom
+go run main.go --redis_addr redis.example.com:6379 --addr :8080
 
-# Stream task updates
-go run main.go -op=stream -message="Hello, streaming!"
+# Show help
+go run main.go --help
 ```
 
-The client supports the following operations:
+### 3. Run the Client
 
-- `send`: Create and send a new task, then poll until completion
-- `get`: Retrieve the status of an existing task
-- `cancel`: Cancel an in-progress task
-- `stream`: Create a task and stream updates until completion
+In another terminal:
+```bash
+cd taskmanager/redis/example/client
+go run main.go
+```
 
-Command-line arguments:
+With custom parameters:
+```bash
+# Custom text input
+go run main.go --text "Hello World! CONVERT THIS TEXT"
 
-- `-server`: The A2A server URL (default: http://localhost:8080)
-- `-message`: The message to send (default: "Hello, world!")
-- `-op`: The operation to perform (default: "send")
-- `-task`: The task ID (required for get and cancel operations)
-- `-idkey`: An idempotency key for task creation (optional)
+# Custom server URL
+go run main.go --addr http://localhost:9000/
 
-## Understanding the Code
+# Only test streaming mode (enhanced visual effects)
+go run main.go --streaming --verbose
 
-### Server
+# Only test non-streaming mode
+go run main.go --non-streaming
 
-The server implementation:
+# Enable verbose output for detailed information
+go run main.go --verbose
 
-1. Uses the `redismgr.TaskManager` for persistent task storage in Redis
-2. Implements a custom `DemoTaskProcessor` for task processing logic
-3. Creates an official A2A server with appropriate configuration
-4. Handles tasks via the A2A protocol endpoints
+# Show help
+go run main.go --help
+```
 
-### Client
+## Sample Output
 
-The client implementation:
+### Non-streaming Mode
+```
+=== Text Case Converter Client ===
+Server: http://localhost:8080/
+Input text: 'Hello World! THIS IS A TEST MESSAGE.'
 
-1. Uses the official `client.A2AClient` to communicate with the server
-2. Supports various operations through the command-line interface
-3. Formats and displays task state and artifacts
-4. Demonstrates both synchronous and streaming interaction
+Test 1: Non-streaming conversion
+→ Sending non-streaming request...
+✓ Processing time: 45.123ms
+📄 Result 1: 'hello world! this is a test message.'
+```
 
-## Example Flow
+### Streaming Mode (Enhanced Display)
+```
+Test 2: Streaming conversion with task updates
+-> Starting streaming request...
+[STREAMING] Processing events:
+[TASK] ID: msg-a1b2c3d4...
+[WORKING] Task State: working (Event #1)
+   [MESSAGE] [STARTING] Initializing text conversion process...
+[WORKING] Task State: working (Event #2)
+   [MESSAGE] [ANALYZING] Processing input text (37 characters)...
+[WORKING] Task State: working (Event #3)
+   [MESSAGE] [PROCESSING] Converting text to lowercase...
+[WORKING] Task State: working (Event #4)
+   [MESSAGE] [ARTIFACT] Creating result artifact...
+[ARTIFACT] ID: processed-text-msg-a1b2c3d4...
+   [NAME] Text to Lowercase
+   [DESC] Convert any text to lowercase
+   [CONTENT] 'hello world! this is a test message.'
+   [METADATA]
+      operation: text_to_lower
+      originalText: Hello World! THIS IS A TEST MESSAGE.
+      originalLength: 37
+      resultLength: 37
+      processedAt: 2025-01-02T10:30:45Z
+      processingTime: 1.7s
+[SUCCESS] Task State: completed
+   [MESSAGE] [COMPLETED] Text processing finished! Original: 'Hello World! THIS IS A TEST MESSAGE.' -> Lowercase: 'hello world! this is a test message.'
+[FINISHED] Task completed! (Total time: 2.1s)
+[COMPLETED] Stream finished (5 events, 2.1s total)
+```
 
-1. Start the server:
-   ```bash
-   cd server
-   go run main.go
-   ```
+## What This Demonstrates
 
-2. Send a task from the client:
-   ```bash
-   cd client
-   go run main.go -op=send -message="Process this message"
-   ```
+- **Redis Storage**: Messages, tasks, and artifacts persisted in Redis
+- **Task Management**: Real-time task state transitions with multiple processing steps
+- **Streaming Events**: Live updates via Server-Sent Events with clear text indicators
+- **Artifact Creation**: Generated content with rich metadata
+- **Command Line Interface**: Modern flag-based parameter handling
+- **Code Standards**: Clean code structure with constants and proper naming conventions
 
-3. The client will display task status updates, including the final result and any artifacts produced.
+## Command Line Options
 
-## Error Handling
+**Server Options:**
+```bash
+go run main.go [OPTIONS]
 
-The example demonstrates error handling in several ways:
+Options:
+  --redis_addr string    Redis server address (default "localhost:6379")
+  --addr string         Server listen address (default ":8080")
+  --help               Show help message
+  --version            Show version information
 
-- If you include the word "error" in your message, the server will return a simulated error
-- Connection errors between client and server are properly reported
-- Task cancellation is supported through the cancel operation
+Examples:
+  go run main.go                                # Use default settings
+  go run main.go --redis_addr localhost:6380   # Custom Redis port
+  go run main.go --addr :9000                  # Custom server port
+  go run main.go --redis_addr redis.example.com:6379 --addr :8080
+```
 
-## Next Steps
+**Client Options:**
+```bash
+go run main.go [OPTIONS]
 
-- Modify the `DemoTaskProcessor` to implement your own task processing logic
-- Configure the Redis task manager for production use (authentication, clustering, etc.)
-- Integrate the server into your own application 
+Options:
+  --addr string          Server URL (default "http://localhost:8080/")
+  --text string          Input text to process (default "Hello World! THIS IS A TEST MESSAGE.")
+  --streaming           Only test streaming mode
+  --non-streaming       Only test non-streaming mode
+  --verbose             Enable verbose output
+  --help                Show help message
+  --version             Show version information
+
+Examples:
+  go run main.go                                        # Use default settings
+  go run main.go --text "Custom Text"                   # Custom input text
+  go run main.go --addr http://localhost:9000/          # Custom server URL
+  go run main.go --streaming                            # Only test streaming mode
+  go run main.go --non-streaming                        # Only test non-streaming mode
+  go run main.go --verbose                              # Enable verbose output
+```
+
+## Enhanced Features
+
+### Visual Improvements
+- **Text Indicators**: Clear prefixed labels for different event types
+- **Progress Animation**: Text-based progress indicators during processing (verbose mode)
+- **Structured Output**: Consistent formatting with bracketed prefixes
+- **Detailed Metadata**: Rich information about processing steps (verbose mode)
+
+### Streaming Enhancements
+- **Multi-step Processing**: Server shows detailed progress through multiple phases:
+  1. [STARTING] Initialize process
+  2. [ANALYZING] Process input
+  3. [PROCESSING] Convert text
+  4. [ARTIFACT] Create artifact
+  5. [COMPLETED] Finish processing
+- **Rich Artifacts**: Detailed metadata including processing time and statistics
+- **Event Counting**: Track number of streaming events received
+
+### Code Quality Improvements
+- **Constants Usage**: All hardcoded strings replaced with named constants
+- **Function Separation**: Logical separation of concerns in processing functions
+- **Type Safety**: Proper handling of pointer types and interfaces
+- **Error Handling**: Comprehensive error checking and reporting
+
+## Troubleshooting
+
+**Redis Connection Failed:**
+- Check if Redis is running: `redis-cli ping`
+- Verify the Redis address: `--redis_addr localhost:6379`
+
+**Server Port in Use:**
+- Use different port: `--addr :8081`
+
+**Client Connection Failed:**
+- Ensure server is running
+- Check server URL: `--addr http://localhost:8080/`
+
+**Streaming Effects Not Visible:**
+- Use `--streaming --verbose` for maximum visual effect
+- Ensure you're testing the streaming mode only 
