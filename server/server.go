@@ -749,22 +749,10 @@ func handleSSEStream[T interface{}](
 		select {
 		case event, ok := <-eventsChan:
 			if !ok {
-				// Channel closed by task manager (task finished or error).
-				log.Infof("SSE stream closing request ID: %s", rpcID)
-				// Send a final SSE event indicating closure.
-				closeData := sse.CloseEventData{
-					ID:     rpcID,
-					Reason: "task ended",
-				}
-				// Use JSON-RPC format for the close event
-				if err := sse.FormatJSONRPCEvent(w, protocol.EventClose, rpcID, &closeData); err != nil {
-					log.Errorf("Error writing SSE JSON-RPC close event for request ID: %s: %v", rpcID, err)
-				} else {
-					flusher.Flush()
-				}
+				flusher.Flush()
 				return // End the handler.
 			}
-			if err := sendSSEEvent(w, rpcID, flusher, &event); err != nil {
+			if err := sendSSEEvent(w, rpcID, &event); err != nil {
 				if err == errUnknownEvent {
 					log.Warnf("Unknown event type received for request ID: %s: %T. Skipping.", rpcID, event)
 					continue
@@ -782,7 +770,7 @@ func handleSSEStream[T interface{}](
 	}
 }
 
-func sendSSEEvent(w http.ResponseWriter, rpcID string, flusher http.Flusher, event interface{}) error {
+func sendSSEEvent(w http.ResponseWriter, rpcID string, event interface{}) error {
 	// Determine event type string for SSE.
 	var eventType string
 	var actualEvent protocol.Event
@@ -790,8 +778,8 @@ func sendSSEEvent(w http.ResponseWriter, rpcID string, flusher http.Flusher, eve
 	// Handle StreamingMessageEvent by extracting the inner Result
 	if streamEvent, ok := event.(*protocol.StreamingMessageEvent); ok {
 		actualEvent = streamEvent.Result
-	} else if directEvent, ok := event.(protocol.Event); ok {
-		actualEvent = directEvent
+	} else if taskEvent, ok := event.(*protocol.TaskEvent); ok {
+		actualEvent = *taskEvent
 	} else {
 		return errUnknownEvent
 	}
