@@ -757,14 +757,14 @@ func handleSSEStream[T interface{}](
 					Reason: "task ended",
 				}
 				// Use JSON-RPC format for the close event
-				if err := sse.FormatJSONRPCEvent(w, protocol.EventClose, rpcID, closeData); err != nil {
+				if err := sse.FormatJSONRPCEvent(w, protocol.EventClose, rpcID, &closeData); err != nil {
 					log.Errorf("Error writing SSE JSON-RPC close event for request ID: %s: %v", rpcID, err)
 				} else {
 					flusher.Flush()
 				}
 				return // End the handler.
 			}
-			if err := sendSSEEvent(w, rpcID, flusher, event); err != nil {
+			if err := sendSSEEvent(w, rpcID, flusher, &event); err != nil {
 				if err == errUnknownEvent {
 					log.Warnf("Unknown event type received for request ID: %s: %T. Skipping.", rpcID, event)
 					continue
@@ -788,7 +788,7 @@ func sendSSEEvent(w http.ResponseWriter, rpcID string, flusher http.Flusher, eve
 	var actualEvent protocol.Event
 
 	// Handle StreamingMessageEvent by extracting the inner Result
-	if streamEvent, ok := event.(protocol.StreamingMessageEvent); ok {
+	if streamEvent, ok := event.(*protocol.StreamingMessageEvent); ok {
 		actualEvent = streamEvent.Result
 	} else if directEvent, ok := event.(protocol.Event); ok {
 		actualEvent = directEvent

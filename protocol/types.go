@@ -118,9 +118,9 @@ const (
 	// KindTask is the kind of the task.
 	KindTask = "task"
 	// KindTaskStatusUpdate is the kind of the task status update event.
-	KindTaskStatusUpdate = "status_update"
+	KindTaskStatusUpdate = "status-update"
 	// KindTaskArtifactUpdate is the kind of the task artifact update event.
-	KindTaskArtifactUpdate = "artifact_update"
+	KindTaskArtifactUpdate = "artifact-update"
 	// KindData is the kind of the data.
 	KindData = "data"
 	// KindFile is the kind of the file.
@@ -661,11 +661,12 @@ func NewTaskStatusUpdateEvent(taskID, contextID string, status TaskStatus, final
 		ContextID: contextID,
 		Kind:      KindTaskStatusUpdate,
 		Status:    status,
+		Final:     &final,
 	}
 }
 
 // NewTaskArtifactUpdateEvent creates a new TaskArtifactUpdateEvent.
-func NewTaskArtifactUpdateEvent(taskID, contextID string, artifact Artifact, final bool) TaskArtifactUpdateEvent {
+func NewTaskArtifactUpdateEvent(taskID, contextID string, artifact Artifact) TaskArtifactUpdateEvent {
 	return TaskArtifactUpdateEvent{
 		TaskID:    taskID,
 		ContextID: contextID,
@@ -869,6 +870,10 @@ func (r *StreamingMessageEvent) MarshalJSON() ([]byte, error) {
 	case KindMessage:
 		return json.Marshal(r.Result)
 	case KindTask:
+		return json.Marshal(r.Result)
+	case KindTaskStatusUpdate:
+		return json.Marshal(r.Result)
+	case KindTaskArtifactUpdate:
 		return json.Marshal(r.Result)
 	default:
 		return nil, fmt.Errorf("unsupported result kind: %s", r.Result.GetKind())
