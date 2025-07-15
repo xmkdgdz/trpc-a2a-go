@@ -1,6 +1,6 @@
 // Tencent is pleased to support the open source community by making trpc-a2a-go available.
 //
-// Copyright (C) 2025 THL A29 Limited, a Tencent company.  All rights reserved.
+// Copyright (C) 2025 Tencent.  All rights reserved.
 //
 // trpc-a2a-go is licensed under the Apache License Version 2.0.
 
@@ -46,7 +46,8 @@ func main() {
 	params := protocol.SendMessageParams{
 		Message: userMessage,
 		Configuration: &protocol.SendMessageConfiguration{
-			Blocking: boolPtr(false), // Non-blocking for streaming, blocking for standard
+			Blocking:            boolPtr(false), // Non-blocking for streaming, blocking for standard
+			AcceptedOutputModes: []string{"text"},
 		},
 	}
 

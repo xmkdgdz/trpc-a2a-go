@@ -1,6 +1,6 @@
 // Tencent is pleased to support the open source community by making trpc-a2a-go available.
 //
-// Copyright (C) 2025 THL A29 Limited, a Tencent company.  All rights reserved.
+// Copyright (C) 2025 Tencent.  All rights reserved.
 //
 // trpc-a2a-go is licensed under the Apache License Version 2.0.
 
@@ -25,6 +25,9 @@ type ProcessOptions struct {
 
 	// PushNotificationConfig contains push notification configuration
 	PushNotificationConfig *protocol.PushNotificationConfig
+
+	// AcceptedOutputModes is the list of accepted output modes.
+	AcceptedOutputModes []string
 
 	// Streaming indicates whether this is a streaming request
 	// If true, the user should return event streams through the StreamingEvents channel
@@ -54,8 +57,8 @@ type TaskHandler interface {
 	// AddArtifact adds an artifact to the specified task.
 	AddArtifact(taskID *string, artifact protocol.Artifact, isFinal bool, needMoreData bool) error
 
-	// SubScribeTask subscribes to the task and returns the task subscriber.
-	SubScribeTask(taskID *string) (TaskSubscriber, error)
+	// SubscribeTask subscribes to the task and returns the task subscriber.
+	SubscribeTask(taskID *string) (TaskSubscriber, error)
 
 	// GetTask returns the task by taskID. Returns an error if the task cannot be found.
 	GetTask(taskID *string) (CancellableTask, error)
