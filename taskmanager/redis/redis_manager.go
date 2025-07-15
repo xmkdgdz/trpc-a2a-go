@@ -45,7 +45,7 @@ type TaskManager struct {
 	// processor is the user-provided message processor.
 	processor taskmanager.MessageProcessor
 	// client is the Redis client.
-	client *redis.Client
+	client redis.UniversalClient
 	// expiration is the time after which Redis keys expire.
 	expiration time.Duration
 
@@ -65,7 +65,7 @@ type TaskManager struct {
 
 // NewTaskManager creates a new Redis-based TaskManager with the provided options.
 func NewTaskManager(
-	client *redis.Client,
+	client redis.UniversalClient,
 	processor taskmanager.MessageProcessor,
 	opts ...TaskManagerOption,
 ) (*TaskManager, error) {
