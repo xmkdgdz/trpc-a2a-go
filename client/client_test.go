@@ -248,6 +248,149 @@ func TestA2AClient_StreamTask(t *testing.T) {
 	})
 }
 
+// TestA2AClient_ResubscribeTask tests the ResubscribeTask client method for SSE.
+func TestA2AClient_ResubscribeTask(t *testing.T) {
+	taskID := protocol.GenerateTaskID()
+	params := protocol.TaskIDParams{
+		RPCID: taskID,
+		ID:    taskID,
+	}
+	paramsBytes, err := json.Marshal(params)
+	require.NoError(t, err)
+
+	expectedRequest := &jsonrpc.Request{
+		Message: jsonrpc.Message{JSONRPC: "2.0", ID: taskID},
+		Method:  protocol.MethodTasksResubscribe,
+		Params:  json.RawMessage(paramsBytes),
+	}
+
+	t.Run("ResubscribeTask Success", func(t *testing.T) {
+		// Prepare mock SSE stream data.
+		sseEvent1Data, _ := json.Marshal(protocol.TaskStatusUpdateEvent{
+			TaskID: taskID,
+			Kind:   protocol.KindTaskStatusUpdate,
+			Status: protocol.TaskStatus{State: protocol.TaskStateWorking},
+			Final:  false,
+		})
+		sseEvent2Data, _ := json.Marshal(protocol.TaskArtifactUpdateEvent{
+			TaskID:   taskID,
+			Kind:     protocol.KindTaskArtifactUpdate,
+			Artifact: protocol.Artifact{ArtifactID: "0", Parts: []protocol.Part{protocol.NewTextPart("SSE data")}},
+		})
+		sseEvent3Data, _ := json.Marshal(protocol.TaskStatusUpdateEvent{
+			TaskID: taskID,
+			Kind:   protocol.KindTaskStatusUpdate,
+			Status: protocol.TaskStatus{State: protocol.TaskStateCompleted},
+			Final:  true,
+		})
+
+		// Format the mock SSE stream string.
+		sseStream := fmt.Sprintf("event: task_status_update\ndata: %s\n\n"+
+			"event: task_artifact_update\ndata: %s\n\n"+
+			"event: task_status_update\ndata: %s\n\n",
+			string(sseEvent1Data), string(sseEvent2Data), string(sseEvent3Data))
+
+		// Define required SSE headers.
+		sseHeaders := map[string]string{
+			"Content-Type":  "text/event-stream",
+			"Cache-Control": "no-cache",
+			"Connection":    "keep-alive",
+		}
+
+		mockHandler := createMockServerHandler(
+			t,
+			protocol.MethodTasksResubscribe,
+			expectedRequest,
+			sseStream,
+			http.StatusOK,
+			sseHeaders,
+		)
+		server := httptest.NewServer(mockHandler)
+		defer server.Close()
+
+		client, err := NewA2AClient(server.URL)
+		require.NoError(t, err)
+
+		// Call the client method.
+		eventChan, err := client.ResubscribeTask(context.Background(), params)
+
+		// Assertions for successful stream initiation.
+		require.NoError(t, err, "ResubscribeTask should not return an error on success")
+		require.NotNil(t, eventChan, "Event channel should not be nil")
+
+		// Read events from channel with timeout.
+		var receivedEvents []protocol.StreamingMessageEvent
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	loop:
+		for {
+			select {
+			case event, ok := <-eventChan:
+				if !ok {
+					break loop // Channel closed, exit loop.
+				}
+				receivedEvents = append(receivedEvents, event)
+			case <-ctx.Done():
+				t.Fatal("Timeout waiting for events from StreamTask channel")
+			}
+		}
+
+		// Assert the content and order of received events.
+		require.Len(t, receivedEvents, 3, "Should receive exactly 3 events")
+		_, ok1 := receivedEvents[0].Result.(*protocol.TaskStatusUpdateEvent)
+		_, ok2 := receivedEvents[1].Result.(*protocol.TaskArtifactUpdateEvent)
+		_, ok3 := receivedEvents[2].Result.(*protocol.TaskStatusUpdateEvent)
+		assert.True(t, ok1 && ok2 && ok3, "Received event types mismatch expected sequence")
+		assert.Equal(t, protocol.TaskStateWorking,
+			receivedEvents[0].Result.(*protocol.TaskStatusUpdateEvent).Status.State, "First event state mismatch")
+		assert.False(t, receivedEvents[0].Result.(*protocol.TaskStatusUpdateEvent).IsFinal(), "First event should not be final")
+		assert.False(t, receivedEvents[1].Result.(*protocol.TaskArtifactUpdateEvent).IsFinal(), "Second event should not be final")
+		assert.Equal(t, protocol.TaskStateCompleted,
+			receivedEvents[2].Result.(*protocol.TaskStatusUpdateEvent).Status.State, "Third event state mismatch")
+		assert.True(t, receivedEvents[2].Result.(*protocol.TaskStatusUpdateEvent).IsFinal(), "Last event should be final")
+	})
+
+	t.Run("ResubscribeTask HTTP Error", func(t *testing.T) {
+		// Prepare mock server HTTP error response.
+		mockHandler := createMockServerHandler(
+			t, protocol.MethodTasksResubscribe, expectedRequest, "Not Found", http.StatusNotFound, nil,
+		)
+		server := httptest.NewServer(mockHandler)
+		defer server.Close()
+
+		client, err := NewA2AClient(server.URL)
+		require.NoError(t, err)
+
+		// Call the client method.
+		eventChan, err := client.ResubscribeTask(context.Background(), params)
+
+		// Assertions.
+		require.Error(t, err, "ResubscribeTask should return an error on HTTP error")
+		assert.Nil(t, eventChan, "Event channel should be nil on error")
+		assert.Contains(t, err.Error(), "unexpected http status 404")
+	})
+
+	t.Run("ResubscribeTask Non-SSE Response", func(t *testing.T) {
+		// Prepare mock server response without proper SSE headers.
+		mockHandler := createMockServerHandler(
+			t, protocol.MethodTasksResubscribe, expectedRequest, "Not an SSE response", http.StatusOK, nil,
+		)
+		server := httptest.NewServer(mockHandler)
+		defer server.Close()
+
+		client, err := NewA2AClient(server.URL)
+		require.NoError(t, err)
+
+		// Call the client method.
+		eventChan, err := client.ResubscribeTask(context.Background(), params)
+
+		// Assertions.
+		require.Error(t, err, "ResubscribeTask should return an error for non-SSE response")
+		assert.Nil(t, eventChan, "Event channel should be nil on error")
+		assert.Contains(t, err.Error(), "did not respond with Content-Type 'text/event-stream'")
+	})
+}
+
 // TestA2AClient_GetTasks tests the GetTasks client method covering success and error scenarios.
 func TestA2AClient_GetTasks(t *testing.T) {
 	taskID := "client-get-task-1"

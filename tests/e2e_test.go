@@ -481,7 +481,55 @@ func TestE2E_MessageAPI_Streaming(t *testing.T) {
 
 	// Collect all events
 	events := collectAllStreamingEvents(eventChan)
+	checkStreamingEvents(t, events)
+}
 
+// TestE2E_MessageAPI_Resubscribe tests the streaming functionality with interrupted using the new message API.
+func TestE2E_MessageAPI_Resubscribe(t *testing.T) {
+	helper := newTestHelper(t, &testProcessor{})
+	defer helper.cleanup()
+
+	// Test data
+	inputText := "Hello world!"
+
+	// Generate context ID and task ID
+	contextID := protocol.GenerateContextID()
+	taskID := protocol.GenerateTaskID()
+
+	// Create message using the NewMessageWithContext constructor
+	message := protocol.NewMessageWithContext(
+		protocol.MessageRoleUser,
+		[]protocol.Part{
+			protocol.NewTextPart(inputText),
+		},
+		&taskID,
+		&contextID,
+	)
+
+	// Send streaming message using the new API, without subscribing events
+	_, err := helper.client.StreamMessage(
+		context.Background(),
+		protocol.SendMessageParams{
+			Message: message,
+		},
+	)
+	require.NoError(t, err)
+
+	// Resubscribe to streaming message events using the new API
+	eventChan, err := helper.client.ResubscribeTask(
+		context.Background(),
+		protocol.TaskIDParams{
+			ID: taskID,
+		},
+	)
+	require.NoError(t, err)
+
+	// Collect all events
+	events := collectAllStreamingEvents(eventChan)
+	checkStreamingEvents(t, events)
+}
+
+func checkStreamingEvents(t *testing.T, events []protocol.StreamingMessageEvent) {
 	// Verify we received events
 	require.NotEmpty(t, events, "Should have received events")
 
