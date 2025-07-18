@@ -158,12 +158,35 @@ func (c *A2AClient) StreamTask(
 	if err != nil {
 		return nil, fmt.Errorf("a2aClient.StreamTask: failed to marshal params: %w", err)
 	}
-	resp, err := c.sendA2AStreamRequest(ctx, params.RPCID, paramsBytes)
+	resp, err := c.sendA2AStreamRequest(ctx, params.RPCID, protocol.MethodMessageStream, paramsBytes)
 	if err != nil {
 		return nil, fmt.Errorf("a2aClient.StreamTask: failed to build stream request: %w", err)
 	}
 	// Create the channel to send events back to the caller.
 	eventsChan := make(chan protocol.TaskEvent, 10) // Buffered channel.
+	// Start a goroutine to read from the SSE stream.
+	go processSSEStream(ctx, resp, params.ID, eventsChan)
+	return eventsChan, nil
+}
+
+// ResubscribeTask sends a message using tasks/resubscribe and returns a channel for receiving SSE events.
+// It handles reconnecting to an SSE stream for an ongoing task after a previous connection was interrupted.
+// The returned channel will be closed when the stream ends (task completion, error, or context cancellation).
+func (c *A2AClient) ResubscribeTask(
+	ctx context.Context,
+	params protocol.TaskIDParams,
+) (<-chan protocol.StreamingMessageEvent, error) {
+	// Create the JSON-RPC request.
+	paramsBytes, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("a2aClient.ResubscribeTask: failed to marshal params: %w", err)
+	}
+	resp, err := c.sendA2AStreamRequest(ctx, params.RPCID, protocol.MethodTasksResubscribe, paramsBytes)
+	if err != nil {
+		return nil, fmt.Errorf("a2aClient.ResubscribeTask: failed to build stream request: %w", err)
+	}
+	// Create the channel to send events back to the caller.
+	eventsChan := make(chan protocol.StreamingMessageEvent, 10) // Buffered channel.
 	// Start a goroutine to read from the SSE stream.
 	go processSSEStream(ctx, resp, params.ID, eventsChan)
 	return eventsChan, nil
@@ -181,7 +204,7 @@ func (c *A2AClient) StreamMessage(
 	if err != nil {
 		return nil, fmt.Errorf("a2aClient.StreamMessage: failed to marshal params: %w", err)
 	}
-	resp, err := c.sendA2AStreamRequest(ctx, params.RPCID, paramsBytes)
+	resp, err := c.sendA2AStreamRequest(ctx, params.RPCID, protocol.MethodMessageStream, paramsBytes)
 	if err != nil {
 		return nil, fmt.Errorf("a2aClient.StreamMessage: failed to build stream request: %w", err)
 	}
@@ -191,9 +214,9 @@ func (c *A2AClient) StreamMessage(
 	return eventsChan, nil
 }
 
-func (c *A2AClient) sendA2AStreamRequest(ctx context.Context, id string, paramsBytes []byte) (*http.Response, error) {
+func (c *A2AClient) sendA2AStreamRequest(ctx context.Context, id, method string, paramsBytes []byte) (*http.Response, error) {
 	// Create the JSON-RPC request.
-	request := jsonrpc.NewRequest(protocol.MethodMessageStream, id)
+	request := jsonrpc.NewRequest(method, id)
 	request.Params = paramsBytes
 	reqBody, err := json.Marshal(request)
 	if err != nil {
