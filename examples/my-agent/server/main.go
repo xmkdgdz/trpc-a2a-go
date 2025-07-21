@@ -10,7 +10,10 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
+	"time"
 
+	"trpc.group/trpc-go/trpc-a2a-go/auth"
 	"trpc.group/trpc-go/trpc-a2a-go/protocol"
 	"trpc.group/trpc-go/trpc-a2a-go/server"
 	"trpc.group/trpc-go/trpc-a2a-go/taskmanager"
@@ -72,6 +75,37 @@ func boolPtr(b bool) *bool {
 }
 
 func main() {
+
+	// Create a JWT authentication provider
+	jwtSecret := []byte("your-secret-key")
+	jwtProvider := auth.NewJWTAuthProvider(
+		jwtSecret,
+		"your-audience",
+		"your-issuer",
+		24*time.Hour, // token lifetime
+	)
+
+	// Or create an API key authentication provider
+	apiKeys := map[string]string{
+		"api-key-1": "user1",
+		"api-key-2": "user2",
+	}
+	apiKeyProvider := auth.NewAPIKeyAuthProvider(apiKeys, "X-API-Key")
+
+	// OAuth2 token validation provider
+	oauth2Provider := auth.NewOAuth2AuthProviderWithConfig(
+		nil,   // No config needed for simple validation
+		"",    // No userinfo endpoint for this example
+		"sub", // Default subject field for identifying users
+	)
+
+	// Chain multiple authentication methods
+	chainProvider := auth.NewChainAuthProvider(
+		jwtProvider,
+		apiKeyProvider,
+		oauth2Provider,
+	)
+
 	// Create the agent card
 	agentCard := server.AgentCard{
 		Name:        "My Agent",
@@ -106,8 +140,25 @@ func main() {
 		log.Fatalf("Failed to create task manager: %v", err)
 	}
 
-	// Create the server
-	srv, err := server.NewA2AServer(agentCard, taskManager)
+	// Create an authenticator for push notifications
+	notifAuth := auth.NewPushNotificationAuthenticator()
+
+	// Generate a key pair
+	if err := notifAuth.GenerateKeyPair(); err != nil {
+		// Handle error
+	}
+
+	// Expose JWKS endpoint
+	http.HandleFunc("/.well-known/jwks.json", notifAuth.HandleJWKS)
+
+	// Create the server with authentication
+	srv, err := server.NewA2AServer(
+		agentCard,
+		taskManager,
+		server.WithAuthProvider(chainProvider),
+		// Enable JWKS endpoint when creating the server
+		server.WithJWKSEndpoint(true, "/.well-known/jwks.json"),
+	)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
